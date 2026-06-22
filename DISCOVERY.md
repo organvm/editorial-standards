@@ -1,0 +1,49 @@
+# Discovery: organvm/editorial-standards
+
+**Date:** 2026-06-22
+**Verdict:** REAL LATENT VALUE — promote to ranked tier.
+
+## Value Thesis
+
+`editorial-standards` is not a documentation backwater — it is the only place in
+the estate where "what makes writing good" is expressed as a **machine-readable,
+versioned contract** rather than tribal habit. It already ships five YAML schemas
+(`frontmatter-schema`, `quality-rubric`, `category-taxonomy`, `tag-governance`,
+`log-schema`), six essay templates, and a calibrated 100-point quality rubric that
+the `essay-pipeline` consumes to validate, route, and publish every essay in
+`public-process`. That makes it a live upstream dependency with real, present
+value. Its *highest latent* value, though, is that the rubric and frontmatter
+schema are a **reusable documentation-quality standard the entire eight-organ
+estate could adopt** (89 active repos, 0 with a codified docs bar today). The one
+thing blocking that reuse: the schema is declarative-only — the actual enforcement
+logic lives downstream inside `essay-pipeline`, so no other repo can enforce the
+contract without re-implementing it. Extracting that enforcement into a small,
+dependency-light validator that lives *with* the schema turns this repo from a
+passive spec into a drop-in, estate-wide capability: any repo could gate its docs
+on the same quality contract in CI. That is the build-out path, and it is concrete,
+low-cost, and high-leverage.
+
+## What it is (honest account)
+
+- Pure docs + YAML governance repo. No executable code today; CI only YAML-lints
+  `schemas/*.yaml` and checks `templates/*.md` have frontmatter delimiters.
+- Active consumers: `essay-pipeline` (enforces frontmatter schema), `public-process`
+  (uses templates + naming conventions). Directional contract: standards define →
+  pipeline enforces → public-process displays.
+- Known drift worth noting: `README.md` documents an *older* 11-field frontmatter
+  model (`document_type`, `slug`, `organs_referenced`, `abstract`, `status`) while
+  the authoritative `schemas/frontmatter-schema.yaml` defines a different field set
+  (`layout`, `category`, `excerpt`, `portfolio_relevance`, `related_repos`,
+  `reading_time`, `word_count`, `references`, …). The schema is the source of truth;
+  the README needs reconciliation.
+
+## Single best concrete first task
+
+**Ship a standalone, dependency-light frontmatter + quality validator in this repo**
+(a small `validate.py` CLI + a reusable GitHub composite action `action.yml`) that
+reads `schemas/frontmatter-schema.yaml` and checks a target Markdown file/dir
+against it — fixing the README↔schema drift in the same pass. This co-locates
+enforcement with the contract, lets `essay-pipeline` call one canonical validator
+instead of duplicating logic, and lets any of the estate's repos adopt the docs
+quality bar by dropping the action into their CI. It converts the schema from a
+spec other repos *read* into a capability other repos *run*.

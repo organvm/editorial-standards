@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "description": "Ranked-tier registry of repos with discovered latent value. Build-out follows promotion into this list.",
+  "value_repos": [
+    {
+      "repo": "organvm/editorial-standards",
+      "tier": "ranked",
+      "discovered": "2026-06-22",
+      "value_thesis": "Only repo in the estate expressing documentation quality as a machine-readable, versioned contract (5 YAML schemas + 100-point rubric + 6 templates), already consumed by essay-pipeline and public-process. Highest latent value: a reusable docs-quality standard the whole eight-organ estate could adopt once enforcement is co-located with the schema.",
+      "first_task": "Ship a standalone, dependency-light frontmatter + quality validator (validate.py CLI + reusable GitHub composite action) that reads schemas/frontmatter-schema.yaml, reconciling the README/schema field drift in the same pass, so any estate repo can gate its docs on the same contract in CI.",
+      "discovery_doc": "DISCOVERY.md"
+    }
+  ]
+}
