@@ -26,8 +26,10 @@ low-cost, and high-leverage.
 
 ## What it is (honest account)
 
-- Pure docs + YAML governance repo. No executable code today; CI only YAML-lints
-  `schemas/*.yaml` and checks `templates/*.md` have frontmatter delimiters.
+- Pure docs + YAML governance repo, with no reusable validation package or CLI.
+  Workflow-embedded CI parses every schema mapping; verifies the fixed publication
+  and reader-template inventories, headings, and frontmatter contracts; compares
+  the README field table with the schema; and checks the required repository files.
 - Active consumers: `essay-pipeline` (enforces frontmatter schema), `public-process`
   (uses templates + naming conventions). Directional contract: standards define →
   pipeline enforces → public-process displays.
@@ -41,7 +43,7 @@ low-cost, and high-leverage.
 **Ship a standalone, dependency-light frontmatter + quality validator in this repo**
 (a small `validate.py` CLI + a reusable GitHub composite action `action.yml`) that
 reads `schemas/frontmatter-schema.yaml` and checks a target Markdown file/dir
-against it — fixing the README↔schema drift in the same pass. This co-locates
+against it, building on the README/template parity now enforced in CI. This co-locates
 enforcement with the contract, lets `essay-pipeline` call one canonical validator
 instead of duplicating logic, and lets any of the estate's repos adopt the docs
 quality bar by dropping the action into their CI. It converts the schema from a

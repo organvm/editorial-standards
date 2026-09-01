@@ -47,6 +47,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
           import sys
           import yaml
 
@@ -114,17 +115,59 @@ jobs:
                   print(f"::error file={path}::Unknown frontmatter fields: {unknown}")
                   errors += 1
 
+          related_repos_pattern = re.compile(
+              frontmatter_schema["required_fields"]["related_repos"]["item_pattern"]
+          )
+          valid_related_repos = (
+              "organvm/essay-pipeline",
+              "organvm/editorial-standards",
+              "organvm/.github",
+              "organvm-iv-taxis/schema-definitions",
+              "organvm-i-theoria/4-ivi374-F0Rivi4",
+              "organvm-vi-koinonia/public-process",
+              "organvm-viii-operations/future-project",
+              "meta-organvm/organvm-corpvs-testamentvm",
+          )
+          invalid_related_repos = (
+              "essay-pipeline",
+              "github.com/organvm/essay-pipeline",
+              "other/essay-pipeline",
+              "4444j99/portfolio",
+              "local/_portal",
+              "organvm-evil/essay-pipeline",
+              "organvm/",
+              "organvm/.",
+              "organvm/..",
+              "organvm//essay-pipeline",
+              "organvm/../essay-pipeline",
+              "organvm/essay pipeline",
+              "organvm/essay-pipeline/readme",
+              "organvm/essay-pipeline?tab=readme",
+          )
+          for slug in valid_related_repos:
+              if related_repos_pattern.fullmatch(slug) is None:
+                  print(
+                      "::error file=schemas/frontmatter-schema.yaml::"
+                      f"Rejected canonical related_repos slug: {slug}"
+                  )
+                  errors += 1
+          for slug in invalid_related_repos:
+              if related_repos_pattern.fullmatch(slug) is not None:
+                  print(
+                      "::error file=schemas/frontmatter-schema.yaml::"
+                      f"Accepted invalid related_repos slug: {slug}"
+                  )
+                  errors += 1
+
           readme = Path("README.md").read_text(encoding="utf-8")
-          deprecated_guidance = (
-              "the 11 required metadata fields",
-              "All 11 required fields",
+          obsolete_field_guidance = (
               "Must match the `slug` frontmatter field",
               "No markdown in the abstract field",
               "The `organs_referenced` array",
           )
-          for phrase in deprecated_guidance:
+          for phrase in obsolete_field_guidance:
               if phrase in readme:
-                  print(f"::error file=README.md::Deprecated frontmatter guidance: {phrase}")
+                  print(f"::error file=README.md::Obsolete frontmatter guidance: {phrase}")
                   errors += 1
           expected_count_phrases = (
               f"the {len(required_fields)} required metadata fields",
@@ -134,9 +177,34 @@ jobs:
               if phrase not in readme:
                   print(f"::error file=README.md::Missing schema-derived field count: {phrase}")
                   errors += 1
-          for field in sorted(required_fields):
-              if f"| `{field}` |" not in readme:
-                  print(f"::error file=README.md::Frontmatter table omits required field: {field}")
+          frontmatter_section = readme.split("## Frontmatter Schema", 1)
+          if len(frontmatter_section) != 2:
+              print("::error file=README.md::Missing Frontmatter Schema section")
+              errors += 1
+          else:
+              frontmatter_section = frontmatter_section[1].split("\n## ", 1)[0]
+              table_fields = re.findall(
+                  r"^\|\s*`([^`]+)`\s*\|",
+                  frontmatter_section,
+                  flags=re.MULTILINE,
+              )
+              duplicate_fields = sorted(
+                  field for field in set(table_fields) if table_fields.count(field) > 1
+              )
+              table_field_set = set(table_fields)
+              if duplicate_fields:
+                  print(
+                      "::error file=README.md::"
+                      f"Duplicate frontmatter table fields: {duplicate_fields}"
+                  )
+                  errors += 1
+              if table_field_set != required_fields:
+                  missing = sorted(required_fields - table_field_set)
+                  extra = sorted(table_field_set - required_fields)
+                  print(
+                      "::error file=README.md::Frontmatter table/schema mismatch: "
+                      f"missing={missing}, extra={extra}"
+                  )
                   errors += 1
 
           for path in sorted(reader_mode_templates):

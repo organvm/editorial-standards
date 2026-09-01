@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immutable revisions
 - Reconciled all README frontmatter, category, naming, tag, and review guidance
   with the authoritative 12-field schema, with CI regression coverage
+- Expanded `related_repos` validation to canonical consolidated and legacy
+  ORGANVM `owner/repository` slugs
 - Updated repository, pipeline, public-process, and contributing links after consolidation
 
 ## [0.1.0] - 2026-02-17

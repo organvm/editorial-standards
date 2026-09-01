@@ -125,7 +125,7 @@ source of truth. It currently requires 12 fields:
 | `category` | enum | `meta-system`, `case-study`, `retrospective`, `guide`, or `methodology` |
 | `excerpt` | string | 50–400 characters |
 | `portfolio_relevance` | enum | `CRITICAL`, `HIGH`, or `MEDIUM` |
-| `related_repos` | list | GitHub `org/repo` references |
+| `related_repos` | list | Canonical ORGANVM `owner/repository` slugs, such as `organvm/essay-pipeline` |
 | `reading_time` | string | e.g. `12 min` |
 | `word_count` | integer | minimum 500 |
 | `references` | list | citations, or an explicit empty list |
@@ -249,7 +249,7 @@ Before an essay enters review, the author must verify:
 4. **No broken internal links.** All cross-references to other repos, essays, or system components resolve.
 5. **Excerpt bounded.** `excerpt` is a one-paragraph summary between 50 and 400 characters.
 6. **Tags valid.** `tags` contains 2–8 lowercase, hyphenated values; curated tags are preferred, and any new tag is deliberate.
-7. **Repository references accurate.** `related_repos` uses canonical repository references and matches the repositories actually discussed.
+7. **Repository references accurate.** `related_repos` uses canonical, case-preserving `owner/repository` slugs under `organvm`, a legacy numbered `organvm-*` organization, `meta-organvm`, or `meta-organvm-*`, and matches the repositories actually discussed.
 8. **Enumerations valid.** `layout` is `essay`; `category` and `portfolio_relevance` use values admitted by the schema.
 9. **Reading time valid.** `reading_time` uses the `<integer> min` format.
 10. **References explicit.** `references` is a list, including `[]` when the essay has no external citations.

@@ -58,8 +58,11 @@ required_fields:
   related_repos:
     type: list
     item_type: string
-    item_pattern: "^(organvm-|meta-organvm)"
-    description: "GitHub org/repo paths for repos discussed in the essay."
+    item_pattern: >-
+      ^(?:organvm|organvm-(?:i|ii|iii|iv|v|vi|vii|viii)-[a-z0-9]+(?:-[a-z0-9]+)*|meta-organvm(?:-[a-z0-9]+)*)/(?![.]{1,2}$)[A-Za-z0-9._-]{1,100}$
+    description: >-
+      Canonical case-preserving owner/repository slugs in the consolidated organvm,
+      legacy numbered organvm-*, meta-organvm, or meta-organvm-* organizations.
 
   reading_time:
     type: string
