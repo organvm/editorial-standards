@@ -27,9 +27,10 @@ low-cost, and high-leverage.
 ## What it is (honest account)
 
 - Pure docs + YAML governance repo, with no reusable validation package or CLI.
-  Workflow-embedded CI parses every schema mapping; verifies the fixed publication
-  and reader-template inventories, headings, and frontmatter contracts; compares
-  the README field table with the schema; and checks the required repository files.
+  Workflow-embedded CI parses and inventories every schema mapping; verifies the
+  fixed publication and reader-template inventories, headings, tables, and
+  frontmatter contracts; compares every README field-table cell with executable
+  schema rules; validates canonical repository identity; and checks required files.
 - Active consumers: `essay-pipeline` (enforces frontmatter schema), `public-process`
   (uses templates + naming conventions). Directional contract: standards define →
   pipeline enforces → public-process displays.

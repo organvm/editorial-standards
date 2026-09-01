@@ -64,6 +64,48 @@ class EditorialContractTests(unittest.TestCase):
         )
         self.assert_contract_error("frontmatter table header must appear exactly once")
 
+    def test_rejects_frontmatter_table_cell_drift_from_schema(self) -> None:
+        readme_path = self.fixture_root / "README.md"
+        schema_path = self.fixture_root / "schemas/frontmatter-schema.yaml"
+        original_readme = readme_path.read_text(encoding="utf-8")
+        original_schema = schema_path.read_text(encoding="utf-8")
+        mutations = (
+            (
+                readme_path,
+                "| `word_count` | integer | minimum 500 |",
+                "| `word_count` | string | minimum 500 |",
+            ),
+            (schema_path, "    min: 500\n", "    min: 750\n"),
+            (
+                schema_path,
+                "enum: [CRITICAL, HIGH, MEDIUM]",
+                "enum: [CRITICAL, HIGH]",
+            ),
+        )
+        for path, current, replacement in mutations:
+            with self.subTest(path=path.name, replacement=replacement):
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("frontmatter table/schema cells mismatch")
+                readme_path.write_text(original_readme, encoding="utf-8")
+                schema_path.write_text(original_schema, encoding="utf-8")
+
+    def test_rejects_frontmatter_table_field_reordering(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        first = "| `layout` | string | `essay` |"
+        second = "| `title` | string | 10–200 characters |"
+        self.assertIn(f"{first}\n{second}", original)
+        path.write_text(
+            original.replace(f"{first}\n{second}", f"{second}\n{first}", 1),
+            encoding="utf-8",
+        )
+
+        self.assert_contract_error("frontmatter table/schema field order mismatch")
+
     def test_rejects_gap_before_frontmatter_table_data(self) -> None:
         path = self.fixture_root / "README.md"
         original = path.read_text(encoding="utf-8")
@@ -113,6 +155,44 @@ class EditorialContractTests(unittest.TestCase):
 
         self.assert_contract_error("required template markers are out of order")
 
+    def test_requires_every_at_a_glance_row_contiguously(self) -> None:
+        path = self.fixture_root / "templates/repository-readme-v2.md"
+        original = path.read_text(encoding="utf-8")
+        row_labels = (
+            "What it is",
+            "Problem addressed",
+            "Current state",
+            "Primary users",
+            "What Anthony built",
+            "Evidence",
+            "Known limitations",
+        )
+        for label in row_labels:
+            with self.subTest(label=label):
+                lines = original.splitlines()
+                row = next(line for line in lines if line.startswith(f"| **{label}** |"))
+                path.write_text(original.replace(f"{row}\n", "", 1), encoding="utf-8")
+                self.assert_contract_error("row labels/order mismatch")
+                path.write_text(original, encoding="utf-8")
+
+        first_row = "| **What it is** | [Canonical definition] |\n"
+        self.assertIn(first_row, original)
+        path.write_text(
+            original.replace(first_row, first_row + "Detached guidance.\n", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("row labels/order mismatch")
+
+        path.write_text(
+            original.replace(
+                "| **Evidence** | [Tests, source, demo, deployment record, or case study] |",
+                "| **Evidence** | |",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("has empty values")
+
     def test_rejects_noncanonical_seed_or_generated_owner(self) -> None:
         mutations = (
             (
@@ -125,7 +205,7 @@ class EditorialContractTests(unittest.TestCase):
                 "seed.yaml",
                 "Automation Contract for organvm/editorial-standards",
                 "Automation Contract for other/editorial-standards",
-                "automation-contract header",
+                "canonical identity line",
             ),
             (
                 "CLAUDE.md",
@@ -150,6 +230,91 @@ class EditorialContractTests(unittest.TestCase):
                 )
                 self.assert_contract_error(expected_error)
                 path.write_text(original, encoding="utf-8")
+
+    def test_rejects_arbitrary_noncanonical_identity_references(self) -> None:
+        mutations = (
+            (
+                "CHANGELOG.md",
+                "github.com/organvm/editorial-standards/compare",
+                "github.com/other/editorial-standards/compare",
+            ),
+            (
+                "DISCOVERY.md",
+                "# Discovery: organvm/editorial-standards",
+                "# Discovery: other/editorial-standards",
+            ),
+            (
+                "README.md",
+                "https://github.com/organvm)",
+                "https://github.com/orgnvm)",
+            ),
+            (
+                "README.md",
+                "https://github.com/organvm/public-process",
+                "https://github.com/other/public-process",
+            ),
+            (
+                "schemas/frontmatter-schema.yaml",
+                "organvm/public-process/_posts/",
+                "other/public-process/_posts/",
+            ),
+            (
+                "schemas/log-schema.yaml",
+                "organvm/public-process/_logs/",
+                "other/public-process/_logs/",
+            ),
+            (
+                "value-repos.json",
+                '"repo": "organvm/editorial-standards"',
+                '"repo": "other/editorial-standards"',
+            ),
+        )
+        for relative_path, canonical, replacement in mutations:
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(canonical, original)
+                path.write_text(
+                    original.replace(canonical, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("canonical identity line")
+                path.write_text(original, encoding="utf-8")
+
+        readme_path = self.fixture_root / "README.md"
+        original_readme = readme_path.read_text(encoding="utf-8")
+        readme_path.write_text(
+            original_readme
+            + "\ngit clone https://github.com/other/editorial-standards.git\n",
+            encoding="utf-8",
+        )
+        self.assert_contract_error("canonical identity lines for prefix")
+
+    def test_rejects_missing_or_unclassified_schema_files(self) -> None:
+        required_schema_files = (
+            "category-taxonomy.yaml",
+            "frontmatter-schema.yaml",
+            "log-schema.yaml",
+            "quality-rubric.yaml",
+            "reader-mode-rubric.yaml",
+            "tag-governance.yaml",
+        )
+        for filename in required_schema_files:
+            with self.subTest(missing=filename):
+                path = self.fixture_root / "schemas" / filename
+                original = path.read_text(encoding="utf-8")
+                path.unlink()
+                self.assert_contract_error("schema inventory mismatch")
+                path.write_text(original, encoding="utf-8")
+
+        extra = self.fixture_root / "schemas/unclassified.yaml"
+        extra.write_text("schema_version: '1.0'\n", encoding="utf-8")
+        self.assert_contract_error("schema inventory mismatch")
+
+        extra.unlink()
+        nested = self.fixture_root / "schemas/nested/unclassified.yml"
+        nested.parent.mkdir()
+        nested.write_text("schema_version: '1.0'\n", encoding="utf-8")
+        self.assert_contract_error("schema inventory mismatch")
 
     def test_rejects_missing_local_ci_reproduction_command(self) -> None:
         path = self.fixture_root / "README.md"

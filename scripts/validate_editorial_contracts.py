@@ -13,13 +13,65 @@ import yaml
 
 CANONICAL_ORGANIZATION = "organvm"
 CANONICAL_REPOSITORY = "editorial-standards"
-GENERATED_CONTEXTS = (Path("CLAUDE.md"), Path("GEMINI.md"))
-IDENTITY_BEARING_FILES = GENERATED_CONTEXTS + (
-    Path("README.md"),
+CANONICAL_IDENTITY_LINES = {
+    Path("CHANGELOG.md"): (
+        "[Unreleased]: https://github.com/organvm/editorial-standards/compare/v0.1.0...HEAD",
+        "[0.1.0]: https://github.com/organvm/editorial-standards/releases/tag/v0.1.0",
+    ),
+    Path("CLAUDE.md"): (
+        "**Org:** `organvm` | **Repo:** `editorial-standards`",
+    ),
+    Path("DISCOVERY.md"): (
+        "# Discovery: organvm/editorial-standards",
+    ),
+    Path("GEMINI.md"): (
+        "**Org:** `organvm` | **Repo:** `editorial-standards`",
+    ),
+    Path("README.md"): (
+        "[![ORGAN-V: Logos](https://img.shields.io/badge/ORGAN--V-Logos-0d47a1?style=flat-square)](https://github.com/organvm)",
+        "[![CI](https://github.com/organvm/editorial-standards/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm/editorial-standards/actions/workflows/ci.yml)",
+        "[![Tier: Standard](https://img.shields.io/badge/tier-standard-2196f3?style=flat-square)](https://github.com/organvm/editorial-standards)",
+        "- **[public-process](https://github.com/organvm/public-process)** — the publication venue where validated essays are deployed. public-process uses the templates and naming conventions defined here.",
+        "git clone https://github.com/organvm/editorial-standards.git",
+    ),
+    Path("schemas/frontmatter-schema.yaml"): (
+        "# Governs: All essays in organvm/public-process/_posts/",
+    ),
+    Path("schemas/log-schema.yaml"): (
+        "# Governs: All logs in organvm/public-process/_logs/",
+    ),
+    Path("seed.yaml"): (
+        "# seed.yaml — Automation Contract for organvm/editorial-standards",
+    ),
+    Path("value-repos.json"): (
+        '      "repo": "organvm/editorial-standards",',
+    ),
+}
+IDENTITY_LINE_PREFIXES = {
+    Path("CHANGELOG.md"): ("[Unreleased]:", "[0.1.0]:"),
+    Path("CLAUDE.md"): ("**Org:**",),
+    Path("DISCOVERY.md"): ("# Discovery:",),
+    Path("GEMINI.md"): ("**Org:**",),
+    Path("README.md"): (
+        "[![ORGAN-V: Logos]",
+        "[![CI]",
+        "[![Tier: Standard]",
+        "- **[public-process](https://github.com/",
+        "git clone https://github.com/",
+    ),
+    Path("schemas/frontmatter-schema.yaml"): ("# Governs:",),
+    Path("schemas/log-schema.yaml"): ("# Governs:",),
+    Path("seed.yaml"): ("# seed.yaml — Automation Contract for ",),
+    Path("value-repos.json"): ('"repo":',),
+}
+REQUIRED_SCHEMA_FILES = {
+    Path("schemas/category-taxonomy.yaml"),
     Path("schemas/frontmatter-schema.yaml"),
     Path("schemas/log-schema.yaml"),
-    Path("seed.yaml"),
-)
+    Path("schemas/quality-rubric.yaml"),
+    Path("schemas/reader-mode-rubric.yaml"),
+    Path("schemas/tag-governance.yaml"),
+}
 REQUIRED_LOCAL_CI_PREREQUISITES = ("Python 3.12", "PyYAML")
 REQUIRED_LOCAL_CI_COMMANDS = (
     "python3 -m pip install pyyaml",
@@ -154,8 +206,27 @@ REQUIRED_READER_TABLES = {
         ("ID", "Limitation", "Related assertion"),
     ),
 }
+REQUIRED_READER_TABLE_ROW_LABELS = {
+    (Path("templates/repository-readme-v2.md"), ("", "")): (
+        "**What it is**",
+        "**Problem addressed**",
+        "**Current state**",
+        "**Primary users**",
+        "**What Anthony built**",
+        "**Evidence**",
+        "**Known limitations**",
+    ),
+}
 TABLE_DELIMITER_CELL = re.compile(r"^:?-{3,}:?$")
 FRONTMATTER_TABLE_HEADER = ("Field", "Type", "Core constraint")
+DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
+TAG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
+READING_TIME_PATTERN = r"^\d+ min$"
+RELATED_REPOSITORY_PATTERN = (
+    r"^(?:organvm|organvm-(?:i|ii|iii|iv|v|vi|vii|viii)-[a-z0-9]+"
+    r"(?:-[a-z0-9]+)*|meta-organvm(?:-[a-z0-9]+)*)/"
+    r"(?![.]{1,2}$)[A-Za-z0-9._-]{1,100}$"
+)
 
 
 def _load_yaml(path: Path, errors: list[str]) -> Any:
@@ -342,6 +413,73 @@ def _table_cells(line: str) -> list[str] | None:
     return [cell.strip() for cell in stripped[1:-1].split("|")]
 
 
+def _format_enum(values: Any) -> str:
+    if not isinstance(values, list) or not values:
+        return "invalid enum"
+    rendered = [f"`{value}`" for value in values]
+    if len(rendered) == 1:
+        return rendered[0]
+    if len(rendered) == 2:
+        return f"{rendered[0]} or {rendered[1]}"
+    return ", ".join(rendered[:-1]) + f", or {rendered[-1]}"
+
+
+def _expected_frontmatter_readme_cells(
+    field: str, rules: dict[str, Any]
+) -> tuple[str, str]:
+    """Render the human table cells from the executable field rules."""
+    enum_values = rules.get("enum")
+    type_cell = "enum" if isinstance(enum_values, list) and len(enum_values) > 1 else str(
+        rules.get("type")
+    )
+
+    if field == "layout":
+        constraint = _format_enum(enum_values)
+    elif field in {"title", "excerpt"}:
+        constraint = (
+            f"{rules.get('min_length')}–{rules.get('max_length')} characters"
+        )
+    elif field == "author" and rules.get("pattern") == "^@":
+        constraint = "GitHub handle with `@` prefix"
+    elif (
+        field == "date"
+        and rules.get("format") == "YYYY-MM-DD"
+        and rules.get("pattern") == DATE_PATTERN
+    ):
+        constraint = "`YYYY-MM-DD`"
+    elif field == "tags" and rules.get("item_pattern") == TAG_PATTERN:
+        constraint = (
+            f"{rules.get('min_items')}–{rules.get('max_items')} lowercase, "
+            "hyphenated tags"
+        )
+    elif field in {"category", "portfolio_relevance"}:
+        constraint = _format_enum(enum_values)
+    elif (
+        field == "related_repos"
+        and rules.get("type") == "list"
+        and rules.get("item_type") == "string"
+        and rules.get("item_pattern") == RELATED_REPOSITORY_PATTERN
+    ):
+        constraint = (
+            "Canonical ORGANVM `owner/repository` slugs, such as "
+            "`organvm/essay-pipeline`"
+        )
+    elif field == "reading_time" and rules.get("pattern") == READING_TIME_PATTERN:
+        constraint = "e.g. `12 min`"
+    elif field == "word_count" and rules.get("type") == "integer":
+        constraint = f"minimum {rules.get('min')}"
+    elif (
+        field == "references"
+        and rules.get("type") == "list"
+        and rules.get("item_type") == "string"
+        and rules.get("min_items") == 0
+    ):
+        constraint = "citations, or an explicit empty list"
+    else:
+        constraint = f"schema rules `{rules!r}`"
+    return type_cell, constraint
+
+
 def _validate_required_reader_table(
     path: Path,
     lines: list[str],
@@ -373,7 +511,7 @@ def _validate_required_reader_table(
     if not delimiter_valid:
         errors.append(f"{path}: required table {label!r} has an invalid delimiter")
 
-    data_rows = 0
+    data_rows: list[list[str]] = []
     for row_number, line in enumerate(lines[header_index + 2 :], start=1):
         if not line.lstrip().startswith("|"):
             break
@@ -385,10 +523,26 @@ def _validate_required_reader_table(
                 f"{actual_columns} columns; expected {len(header)}"
             )
             continue
-        data_rows += 1
+        data_rows.append(cells)
 
-    if data_rows == 0:
+    if not data_rows:
         errors.append(f"{path}: required table {label!r} has no data rows")
+
+    required_row_labels = REQUIRED_READER_TABLE_ROW_LABELS.get((path, header))
+    if required_row_labels is not None:
+        actual_row_labels = tuple(row[0] for row in data_rows)
+        if actual_row_labels != required_row_labels:
+            errors.append(
+                f"{path}: required table {label!r} row labels/order mismatch: "
+                f"expected={list(required_row_labels)}, "
+                f"actual={list(actual_row_labels)}"
+            )
+        empty_labels = [row[0] for row in data_rows if not row[1]]
+        if empty_labels:
+            errors.append(
+                f"{path}: required table {label!r} has empty values for "
+                f"{empty_labels}"
+            )
 
 
 def _validate_reader_structure(
@@ -419,10 +573,11 @@ def _validate_reader_structure(
 
 
 def _validate_readme(
-    root: Path, required_fields: set[str], errors: list[str]
+    root: Path, required_map: dict[str, Any], errors: list[str]
 ) -> None:
     readme_path = root / "README.md"
     readme = readme_path.read_text(encoding="utf-8")
+    required_fields = set(required_map)
     development_parts = readme.split("## Development", 1)
     development_section = (
         development_parts[1].split("\n## ", 1)[0]
@@ -500,6 +655,7 @@ def _validate_readme(
         errors.append("README.md: invalid frontmatter table delimiter")
 
     table_fields: list[str] = []
+    table_rows: dict[str, tuple[str, str]] = {}
     invalid_rows: list[str] = []
     expected_columns = len(header_cells) if header_cells is not None else 0
     table_lines = lines[header_index + 2 :]
@@ -519,7 +675,9 @@ def _validate_readme(
         if field_match is None:
             invalid_rows.append(line.strip())
         else:
-            table_fields.append(field_match.group(1))
+            field = field_match.group(1)
+            table_fields.append(field)
+            table_rows[field] = (cells[1], cells[2])
 
     if invalid_rows:
         errors.append(
@@ -539,6 +697,47 @@ def _validate_readme(
             "README.md: frontmatter table/schema mismatch: "
             f"missing={missing}, extra={extra}"
         )
+    expected_order = list(required_map)
+    if table_fields != expected_order:
+        errors.append(
+            "README.md: frontmatter table/schema field order mismatch: "
+            f"expected={expected_order}, actual={table_fields}"
+        )
+    for field in sorted(required_fields & table_field_set):
+        rules = required_map.get(field)
+        if not isinstance(rules, dict):
+            errors.append(
+                f"schemas/frontmatter-schema.yaml: rules for {field!r} "
+                "are not a mapping"
+            )
+            continue
+        expected_cells = _expected_frontmatter_readme_cells(field, rules)
+        actual_cells = table_rows[field]
+        if actual_cells != expected_cells:
+            errors.append(
+                f"README.md: frontmatter table/schema cells mismatch for {field!r}: "
+                f"expected={expected_cells}, actual={actual_cells}"
+            )
+
+
+def _validate_schema_inventory(root: Path, errors: list[str]) -> None:
+    discovered = {
+        path.relative_to(root)
+        for path in (root / "schemas").rglob("*")
+        if path.is_file()
+    }
+    missing = sorted(REQUIRED_SCHEMA_FILES - discovered)
+    unclassified = sorted(discovered - REQUIRED_SCHEMA_FILES)
+    if missing or unclassified:
+        errors.append(
+            "schema inventory mismatch: "
+            f"missing={list(map(str, missing))}, "
+            f"unclassified={list(map(str, unclassified))}"
+        )
+    for relative_path in sorted(REQUIRED_SCHEMA_FILES & discovered):
+        schema = _load_yaml(root / relative_path, errors)
+        if schema is not None and not isinstance(schema, dict):
+            errors.append(f"{relative_path}: schema must be a YAML mapping")
 
 
 def _validate_repository_identity(root: Path, errors: list[str]) -> None:
@@ -557,42 +756,38 @@ def _validate_repository_identity(root: Path, errors: list[str]) -> None:
                     f"seed.yaml: expected {field}={expected!r}, found {actual!r}"
                 )
 
-    expected_seed_header = (
-        "# seed.yaml — Automation Contract for "
-        f"{CANONICAL_ORGANIZATION}/{CANONICAL_REPOSITORY}"
-    )
-    try:
-        seed_header = seed_path.read_text(encoding="utf-8").splitlines()[0]
-    except (OSError, IndexError) as exc:
-        errors.append(f"seed.yaml: cannot read automation-contract header: {exc}")
-    else:
-        if seed_header != expected_seed_header:
-            errors.append(
-                f"seed.yaml: automation-contract header must be {expected_seed_header!r}"
-            )
-
-    expected_context_line = (
-        f"**Org:** `{CANONICAL_ORGANIZATION}` | "
-        f"**Repo:** `{CANONICAL_REPOSITORY}`"
-    )
-    for relative_path in GENERATED_CONTEXTS:
+    for relative_path, expected_lines in CANONICAL_IDENTITY_LINES.items():
         path = root / relative_path
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
         except OSError as exc:
-            errors.append(f"{relative_path}: cannot read generated context: {exc}")
+            errors.append(f"{relative_path}: cannot audit repository identity: {exc}")
             continue
-        owner_lines = [
-            line.strip() for line in lines if line.strip().startswith("**Org:**")
-        ]
-        if owner_lines != [expected_context_line]:
-            errors.append(
-                f"{relative_path}: generated owner/repository context must be "
-                f"{expected_context_line!r}"
-            )
+        for expected_line in expected_lines:
+            occurrences = lines.count(expected_line)
+            if occurrences != 1:
+                errors.append(
+                    f"{relative_path}: canonical identity line must appear exactly "
+                    f"once: {expected_line!r}; found {occurrences}"
+                )
+        for prefix in IDENTITY_LINE_PREFIXES[relative_path]:
+            actual_prefixed = [
+                line.strip() for line in lines if line.strip().startswith(prefix)
+            ]
+            expected_prefixed = [
+                line.strip()
+                for line in expected_lines
+                if line.strip().startswith(prefix)
+            ]
+            if actual_prefixed != expected_prefixed:
+                errors.append(
+                    f"{relative_path}: canonical identity lines for prefix "
+                    f"{prefix!r} mismatch: expected={expected_prefixed}, "
+                    f"actual={actual_prefixed}"
+                )
 
     legacy_owner = "organvm-v-logos"
-    for relative_path in IDENTITY_BEARING_FILES:
+    for relative_path in CANONICAL_IDENTITY_LINES:
         path = root / relative_path
         try:
             content = path.read_text(encoding="utf-8")
@@ -608,6 +803,8 @@ def _validate_repository_identity(root: Path, errors: list[str]) -> None:
 def validate(root: Path) -> list[str]:
     root = root.resolve()
     errors: list[str] = []
+
+    _validate_schema_inventory(root, errors)
 
     overlap = PUBLICATION_TEMPLATES & READER_MODE_TEMPLATES
     if overlap:
@@ -722,7 +919,7 @@ def validate(root: Path) -> list[str]:
             )
 
     _validate_log_template(root, errors)
-    _validate_readme(root, required_fields, errors)
+    _validate_readme(root, required_map, errors)
     _validate_repository_identity(root, errors)
 
     for relative_path in sorted(READER_MODE_TEMPLATES):

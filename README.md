@@ -276,7 +276,7 @@ editorial-standards is part of ORGAN-V (Logos / Public Process), the discourse a
 Within ORGAN-V, it connects to:
 
 - **[essay-pipeline](https://github.com/organvm/essay-pipeline)** — the automated pipeline that validates, transforms, and deploys essays. essay-pipeline consumes the frontmatter schema and document type definitions from this repository to validate incoming drafts.
-- **[public-process](https://github.com/organvm-vi-koinonia/public-process)** — the publication venue where validated essays are deployed. public-process uses the templates and naming conventions defined here.
+- **[public-process](https://github.com/organvm/public-process)** — the publication venue where validated essays are deployed. public-process uses the templates and naming conventions defined here.
 
 The relationship is directional: editorial-standards defines the rules, essay-pipeline enforces them, and public-process displays the results. Changes to editorial standards flow downstream through the pipeline to the publication layer.
 
@@ -345,17 +345,26 @@ editorial-standards/
   CHANGELOG.md           # Release history
   .github/
     workflows/
-      ci.yml             # Minimal CI validation
+      ci.yml             # Schema and editorial-contract validation
   docs/
     reader-mode-documentation.md
     adr/
       001-initial-architecture.md
       002-quality-rubric-design.md
   schemas/
+    category-taxonomy.yaml
+    frontmatter-schema.yaml
+    log-schema.yaml
+    quality-rubric.yaml
     reader-mode-rubric.yaml
+    tag-governance.yaml
+  scripts/
+    validate_editorial_contracts.py
   templates/
     repository-readme-v2.md
     audiences/
+  tests/
+    test_editorial_contracts.py
 ```
 
 ## Contributing
