@@ -1,4 +1,4 @@
-[![ORGAN-V: Logos](https://img.shields.io/badge/ORGAN--V-Logos-0d47a1?style=flat-square)](https://github.com/organvm-v-logos)
+[![ORGAN-V: Logos](https://img.shields.io/badge/ORGAN--V-Logos-0d47a1?style=flat-square)](https://github.com/organvm)
 [![CI](https://github.com/organvm/editorial-standards/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm/editorial-standards/actions/workflows/ci.yml)
 [![Tier: Standard](https://img.shields.io/badge/tier-standard-2196f3?style=flat-square)](https://github.com/organvm/editorial-standards)
 
@@ -286,7 +286,9 @@ Beyond ORGAN-V, editorial-standards influences how documentation is written acro
 
 ### Prerequisites
 
-No build tools are required. editorial-standards is a documentation-and-schema repository. All content is Markdown and YAML.
+Python 3.12 and PyYAML are required to run the repository's validation gate.
+The governed content remains Markdown and YAML; the executable contract and its
+adversarial regressions are Python.
 
 ### Local Development
 
@@ -295,20 +297,42 @@ git clone https://github.com/organvm/editorial-standards.git
 cd editorial-standards
 ```
 
-To validate YAML files locally:
+Install the one Python dependency:
+
+```bash
+python3 -m pip install pyyaml
+```
+
+Run the same YAML, editorial-contract, adversarial-regression, and structure
+checks used by hosted CI:
 
 ```bash
 python3 -c "
 import yaml, glob, sys
 errors = 0
-for f in glob.glob('**/*.yaml', recursive=True) + glob.glob('**/*.yml', recursive=True):
+for f in glob.glob('schemas/*.yaml'):
     try:
-        yaml.safe_load(open(f))
+        data = yaml.safe_load(open(f))
+        if not isinstance(data, dict):
+            print(f'ERROR: {f}: not a YAML mapping')
+            errors += 1
     except Exception as e:
         print(f'ERROR: {f}: {e}')
         errors += 1
 sys.exit(1 if errors else 0)
 "
+python3 scripts/validate_editorial_contracts.py
+python3 -m unittest discover -s tests -v
+test -f README.md
+test -f LICENSE
+test -f docs/reader-mode-documentation.md
+```
+
+Before committing, also run the Python and whitespace static checks:
+
+```bash
+python3 -m py_compile scripts/validate_editorial_contracts.py tests/test_editorial_contracts.py
+git diff --check
 ```
 
 ### Repository Structure

@@ -1,6 +1,6 @@
 # frontmatter-schema.yaml — ORGAN-V Essay Frontmatter Specification
 # Version: 1.0
-# Governs: All essays in organvm-v-logos/public-process/_posts/
+# Governs: All essays in organvm/public-process/_posts/
 
 schema_version: "1.0"
 description: >

@@ -2,7 +2,7 @@
 ## System Context (auto-generated — do not edit)
 
 **Organ:** ORGAN-V (Public Process) | **Tier:** standard | **Status:** PUBLIC_PROCESS
-**Org:** `organvm-v-logos` | **Repo:** `editorial-standards`
+**Org:** `organvm` | **Repo:** `editorial-standards`
 
 ### Edges
 - **Produces** → `ORGAN-V`: editorial-governance

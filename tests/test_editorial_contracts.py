@@ -46,6 +46,120 @@ class EditorialContractTests(unittest.TestCase):
 
         self.assert_contract_error("invalid frontmatter table delimiter")
 
+    def test_rejects_wrong_or_duplicate_frontmatter_table_header(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        header = "| Field | Type | Core constraint |"
+        self.assertEqual(1, original.splitlines().count(header))
+
+        path.write_text(
+            original.replace(header, "| Field | Kind | Constraint |", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("frontmatter table header must be exactly")
+
+        path.write_text(
+            original.replace(header, f"{header}\n{header}", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("frontmatter table header must appear exactly once")
+
+    def test_rejects_gap_before_frontmatter_table_data(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        delimiter = "|---|---|---|\n"
+        self.assertIn(delimiter, original)
+        for gap in ("\n", "Detached table guidance.\n"):
+            with self.subTest(gap=gap):
+                path.write_text(
+                    original.replace(delimiter, delimiter + gap, 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(
+                    "frontmatter table data rows must start immediately"
+                )
+        path.write_text(original, encoding="utf-8")
+
+    def test_rejects_incomplete_root_readme_orientation(self) -> None:
+        path = self.fixture_root / "templates/repository-readme-v2.md"
+        original = path.read_text(encoding="utf-8")
+        required_lines = (
+            "> [One ordinary-language sentence: what this is, what it does, and why it exists.]",
+            "Keep only verified, enabled destinations in both the following hero row and the",
+            "[View the project] · [See a demonstration] · [Technical documentation] ·",
+        )
+        for line in required_lines:
+            with self.subTest(line=line):
+                self.assertIn(line, original)
+                path.write_text(original.replace(line, "", 1), encoding="utf-8")
+                self.assert_contract_error("missing required template marker")
+                path.write_text(original, encoding="utf-8")
+
+    def test_rejects_at_a_glance_table_outside_its_section(self) -> None:
+        path = self.fixture_root / "templates/repository-readme-v2.md"
+        original = path.read_text(encoding="utf-8")
+        lines = original.splitlines()
+        header = "| | |"
+        canonical = "## Canonical project documentation"
+        header_index = lines.index(header)
+        row_end = header_index + 2
+        while row_end < len(lines) and lines[row_end].startswith("|"):
+            row_end += 1
+        table = lines[header_index:row_end]
+        del lines[header_index:row_end]
+        canonical_index = lines.index(canonical)
+        lines[canonical_index + 1:canonical_index + 1] = [""] + table
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        self.assert_contract_error("required template markers are out of order")
+
+    def test_rejects_noncanonical_seed_or_generated_owner(self) -> None:
+        mutations = (
+            (
+                "seed.yaml",
+                "org: organvm",
+                "org: organvm-v-logos",
+                "organvm-v-logos",
+            ),
+            (
+                "seed.yaml",
+                "Automation Contract for organvm/editorial-standards",
+                "Automation Contract for other/editorial-standards",
+                "automation-contract header",
+            ),
+            (
+                "CLAUDE.md",
+                "**Org:** `organvm`",
+                "**Org:** `organvm-v-logos`",
+                "organvm-v-logos",
+            ),
+            (
+                "GEMINI.md",
+                "**Org:** `organvm`",
+                "**Org:** `organvm-v-logos`",
+                "organvm-v-logos",
+            ),
+        )
+        for relative_path, canonical, replacement, expected_error in mutations:
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(canonical, original)
+                path.write_text(
+                    original.replace(canonical, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error(expected_error)
+                path.write_text(original, encoding="utf-8")
+
+    def test_rejects_missing_local_ci_reproduction_command(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        command = "python3 scripts/validate_editorial_contracts.py"
+        self.assertIn(command, original)
+        path.write_text(original.replace(command, "", 1), encoding="utf-8")
+
+        self.assert_contract_error("missing local CI reproduction command")
+
     def test_rejects_log_template_missing_schema_required_field(self) -> None:
         path = self.fixture_root / "templates/log.md"
         content = path.read_text(encoding="utf-8")

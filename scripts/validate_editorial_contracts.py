@@ -11,6 +11,26 @@ from typing import Any
 import yaml
 
 
+CANONICAL_ORGANIZATION = "organvm"
+CANONICAL_REPOSITORY = "editorial-standards"
+GENERATED_CONTEXTS = (Path("CLAUDE.md"), Path("GEMINI.md"))
+IDENTITY_BEARING_FILES = GENERATED_CONTEXTS + (
+    Path("README.md"),
+    Path("schemas/frontmatter-schema.yaml"),
+    Path("schemas/log-schema.yaml"),
+    Path("seed.yaml"),
+)
+REQUIRED_LOCAL_CI_PREREQUISITES = ("Python 3.12", "PyYAML")
+REQUIRED_LOCAL_CI_COMMANDS = (
+    "python3 -m pip install pyyaml",
+    "glob.glob('schemas/*.yaml')",
+    "python3 scripts/validate_editorial_contracts.py",
+    "python3 -m unittest discover -s tests -v",
+    "test -f README.md",
+    "test -f LICENSE",
+    "test -f docs/reader-mode-documentation.md",
+    "python3 -m py_compile scripts/validate_editorial_contracts.py tests/test_editorial_contracts.py",
+)
 ESSAY_CATEGORIES = {
     Path("templates/case-study.md"): "case-study",
     Path("templates/guide.md"): "guide",
@@ -37,10 +57,16 @@ CANONICAL_README_LINK = "[Canonical README](../../README.md)"
 REQUIRED_READER_MARKERS = {
     Path("templates/repository-readme-v2.md"): (
         "# [Project name]",
+        "> [One ordinary-language sentence: what this is, what it does, and why it exists.]",
+        "Keep only verified, enabled destinations in both the following hero row and the",
+        "audience table. Remove disabled entries; do not leave placeholders or dead links.",
+        "[View the project] · [See a demonstration] · [Technical documentation] ·",
+        "[Humanities interpretation] · [Business applications] · [Evidence]",
         "## What am I looking at?",
         "## Choose your reading path",
         "| I am reading as… | Start here |",
         "## Project at a glance",
+        "| | |",
         "## Canonical project documentation",
     ),
     Path("templates/evidence.md"): (
@@ -129,6 +155,7 @@ REQUIRED_READER_TABLES = {
     ),
 }
 TABLE_DELIMITER_CELL = re.compile(r"^:?-{3,}:?$")
+FRONTMATTER_TABLE_HEADER = ("Field", "Type", "Core constraint")
 
 
 def _load_yaml(path: Path, errors: list[str]) -> Any:
@@ -396,6 +423,26 @@ def _validate_readme(
 ) -> None:
     readme_path = root / "README.md"
     readme = readme_path.read_text(encoding="utf-8")
+    development_parts = readme.split("## Development", 1)
+    development_section = (
+        development_parts[1].split("\n## ", 1)[0]
+        if len(development_parts) == 2
+        else ""
+    )
+    bash_blocks = "\n".join(
+        re.findall(r"```bash\s*\n(.*?)\n```", development_section, re.DOTALL)
+    )
+    for prerequisite in REQUIRED_LOCAL_CI_PREREQUISITES:
+        if prerequisite not in development_section:
+            errors.append(
+                "README.md: missing local CI reproduction prerequisite: "
+                f"{prerequisite}"
+            )
+    for command in REQUIRED_LOCAL_CI_COMMANDS:
+        if command not in bash_blocks:
+            errors.append(
+                f"README.md: missing local CI reproduction command: {command}"
+            )
     obsolete_field_guidance = (
         "Must match the `slug` frontmatter field",
         "No markdown in the abstract field",
@@ -420,19 +467,27 @@ def _validate_readme(
 
     section = section_parts[1].split("\n## ", 1)[0]
     lines = section.splitlines()
-    header_index = next(
-        (
-            index
-            for index, line in enumerate(lines)
-            if re.match(r"^\s*\|\s*Field\s*\|", line)
-        ),
-        None,
-    )
-    if header_index is None or header_index + 1 >= len(lines):
+    header_candidates = [
+        index
+        for index, line in enumerate(lines)
+        if (cells := _table_cells(line)) is not None and cells[:1] == ["Field"]
+    ]
+    if len(header_candidates) != 1:
+        errors.append(
+            "README.md: frontmatter table header must appear exactly once"
+        )
+        return
+    header_index = header_candidates[0]
+    if header_index + 1 >= len(lines):
         errors.append("README.md: missing frontmatter field table")
         return
 
     header_cells = _table_cells(lines[header_index])
+    if header_cells != list(FRONTMATTER_TABLE_HEADER):
+        errors.append(
+            "README.md: frontmatter table header must be exactly "
+            f"{list(FRONTMATTER_TABLE_HEADER)}"
+        )
     delimiter_cells = _table_cells(lines[header_index + 1])
     delimiter_cell = re.compile(r"^:?-{3,}:?$")
     delimiter_valid = (
@@ -447,11 +502,15 @@ def _validate_readme(
     table_fields: list[str] = []
     invalid_rows: list[str] = []
     expected_columns = len(header_cells) if header_cells is not None else 0
-    for line in lines[header_index + 2 :]:
+    table_lines = lines[header_index + 2 :]
+    if not table_lines or not table_lines[0].lstrip().startswith("|"):
+        errors.append(
+            "README.md: frontmatter table data rows must start immediately "
+            "after the delimiter"
+        )
+    for line in table_lines:
         if not line.lstrip().startswith("|"):
-            if table_fields or invalid_rows:
-                break
-            continue
+            break
         cells = _table_cells(line)
         if cells is None or len(cells) != expected_columns:
             invalid_rows.append(line.strip())
@@ -480,6 +539,70 @@ def _validate_readme(
             "README.md: frontmatter table/schema mismatch: "
             f"missing={missing}, extra={extra}"
         )
+
+
+def _validate_repository_identity(root: Path, errors: list[str]) -> None:
+    """Keep the machine-readable owner and generated contexts canonical."""
+    seed_path = root / "seed.yaml"
+    seed = _load_yaml(seed_path, errors)
+    if isinstance(seed, dict):
+        expected_fields = {
+            "org": CANONICAL_ORGANIZATION,
+            "repo": CANONICAL_REPOSITORY,
+        }
+        for field, expected in expected_fields.items():
+            actual = seed.get(field)
+            if actual != expected:
+                errors.append(
+                    f"seed.yaml: expected {field}={expected!r}, found {actual!r}"
+                )
+
+    expected_seed_header = (
+        "# seed.yaml — Automation Contract for "
+        f"{CANONICAL_ORGANIZATION}/{CANONICAL_REPOSITORY}"
+    )
+    try:
+        seed_header = seed_path.read_text(encoding="utf-8").splitlines()[0]
+    except (OSError, IndexError) as exc:
+        errors.append(f"seed.yaml: cannot read automation-contract header: {exc}")
+    else:
+        if seed_header != expected_seed_header:
+            errors.append(
+                f"seed.yaml: automation-contract header must be {expected_seed_header!r}"
+            )
+
+    expected_context_line = (
+        f"**Org:** `{CANONICAL_ORGANIZATION}` | "
+        f"**Repo:** `{CANONICAL_REPOSITORY}`"
+    )
+    for relative_path in GENERATED_CONTEXTS:
+        path = root / relative_path
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            errors.append(f"{relative_path}: cannot read generated context: {exc}")
+            continue
+        owner_lines = [
+            line.strip() for line in lines if line.strip().startswith("**Org:**")
+        ]
+        if owner_lines != [expected_context_line]:
+            errors.append(
+                f"{relative_path}: generated owner/repository context must be "
+                f"{expected_context_line!r}"
+            )
+
+    legacy_owner = "organvm-v-logos"
+    for relative_path in IDENTITY_BEARING_FILES:
+        path = root / relative_path
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"{relative_path}: cannot audit repository identity: {exc}")
+            continue
+        if legacy_owner in content:
+            errors.append(
+                f"{relative_path}: stale legacy repository owner {legacy_owner!r}"
+            )
 
 
 def validate(root: Path) -> list[str]:
@@ -600,6 +723,7 @@ def validate(root: Path) -> list[str]:
 
     _validate_log_template(root, errors)
     _validate_readme(root, required_fields, errors)
+    _validate_repository_identity(root, errors)
 
     for relative_path in sorted(READER_MODE_TEMPLATES):
         path = root / relative_path
