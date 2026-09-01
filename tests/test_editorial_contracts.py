@@ -3326,6 +3326,8 @@ class EditorialContractTests(unittest.TestCase):
             "[Project home][missing]\n\n[project home]: ../../README.md",
             "[Project home]\n\n(../../README.md)",
             '<pre>\n<a href="../../README.md">Project home</a>\n</pre>',
+            "![Project image][image-home]\n\n[image-home]: ../../README.md",
+            "![Project image](../../README.md)",
             chr(96) + "[Project home]\n(../../README.md)" + chr(96),
         )
         for candidate in nonlinks:

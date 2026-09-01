@@ -2437,6 +2437,19 @@ def _count_visible_markdown_destination(
                 and line[start - 1] == "!"
                 and not _is_backslash_escaped(line, start - 1)
             ):
+                image_end = _find_markdown_label_end(line, start)
+                if image_end >= 0:
+                    suffix = image_end + 1
+                    if suffix < len(line) and line[suffix] == "(":
+                        parsed_image = _inline_markdown_destination(line, suffix)
+                        if parsed_image is not None:
+                            cursor = max(cursor, parsed_image[1])
+                    elif suffix < len(line) and line[suffix] == "[":
+                        reference_end = _find_markdown_label_end(line, suffix)
+                        if reference_end >= 0:
+                            cursor = max(cursor, reference_end + 1)
+                    else:
+                        cursor = max(cursor, image_end + 1)
                 continue
             if any(left <= start < right for left, right in code_ranges):
                 continue
