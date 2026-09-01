@@ -52,19 +52,33 @@ _UniqueKeyLoader.add_constructor(
 
 CANONICAL_ORGANIZATION = "organvm"
 CANONICAL_REPOSITORY = "editorial-standards"
+CANONICAL_SCHEMA_DEPENDENCY = {
+    "type": "schema",
+    "source": "organvm-iv-taxis/schema-definitions",
+    "description": (
+        "Consumes the canonical project-record and assertion-evidence schemas"
+    ),
+}
 CANONICAL_IDENTITY_LINES = {
+    Path("AGENTS.md"): (
+        "- **Consume** `schema` from "
+        "[`organvm-iv-taxis/schema-definitions`]"
+        "(../../organvm-iv-taxis/schema-definitions/CLAUDE.md)",
+    ),
     Path("CHANGELOG.md"): (
         "[Unreleased]: https://github.com/organvm/editorial-standards/compare/v0.1.0...HEAD",
         "[0.1.0]: https://github.com/organvm/editorial-standards/releases/tag/v0.1.0",
     ),
     Path("CLAUDE.md"): (
         "**Org:** `organvm` | **Repo:** `editorial-standards`",
+        "- **Consumes** ← `organvm-iv-taxis/schema-definitions`: schema",
     ),
     Path("DISCOVERY.md"): (
         "# Discovery: organvm/editorial-standards",
     ),
     Path("GEMINI.md"): (
         "**Org:** `organvm` | **Repo:** `editorial-standards`",
+        "- **Consumes** ← `organvm-iv-taxis/schema-definitions`: schema",
     ),
     Path("ecosystem.yaml"): (
         "repo: editorial-standards",
@@ -91,10 +105,11 @@ CANONICAL_IDENTITY_LINES = {
     ),
 }
 IDENTITY_LINE_PREFIXES = {
+    Path("AGENTS.md"): ("- **Consume** `schema` from ",),
     Path("CHANGELOG.md"): ("[Unreleased]:", "[0.1.0]:"),
-    Path("CLAUDE.md"): ("**Org:**",),
+    Path("CLAUDE.md"): ("**Org:**", "- **Consumes** ← "),
     Path("DISCOVERY.md"): ("# Discovery:",),
-    Path("GEMINI.md"): ("**Org:**",),
+    Path("GEMINI.md"): ("**Org:**", "- **Consumes** ← "),
     Path("ecosystem.yaml"): ("repo:", "organ:"),
     Path("README.md"): (
         "[![ORGAN-V: Logos]",
@@ -205,6 +220,7 @@ CANONICAL_MAPPING_IDENTITIES = {
     Path("seed.yaml"): {
         "org": CANONICAL_ORGANIZATION,
         "repo": CANONICAL_REPOSITORY,
+        "consumes": [CANONICAL_SCHEMA_DEPENDENCY],
     },
     Path("ecosystem.yaml"): {
         "repo": CANONICAL_REPOSITORY,
@@ -671,6 +687,13 @@ PUBLICATION_TEMPLATE_SCALAR_PLACEHOLDERS = {
     "reading_time": ("",),
     "word_count": (0,),
 }
+PUBLICATION_TEMPLATE_LIST_PLACEHOLDERS = {
+    (Path("templates/case-study.md"), "tags"): (),
+    (Path("templates/guide.md"), "tags"): ("guide",),
+    (Path("templates/meta-system.md"), "tags"): ("meta-system",),
+    (Path("templates/methodology.md"), "tags"): ("methodology",),
+    (Path("templates/retrospective.md"), "tags"): ("retrospective",),
+}
 RELATED_REPOSITORY_PATTERN = (
     r"^(?:organvm|organvm-(?:i|ii|iii|iv|v|vi|vii|viii)-[a-z0-9]+"
     r"(?:-[a-z0-9]+)*|meta-organvm(?:-[a-z0-9]+)*)/"
@@ -944,6 +967,16 @@ def _validate_declared_type(
         if "max" in rules and value > rules["max"]:
             errors.append(f"{path}: field {field!r} is above the schema maximum")
     elif expected_type == "list":
+        placeholder = PUBLICATION_TEMPLATE_LIST_PLACEHOLDERS.get((path, field))
+        is_placeholder = placeholder is not None and tuple(value) == placeholder
+        if (
+            not is_placeholder
+            and "min_items" in rules
+            and len(value) < rules["min_items"]
+        ):
+            errors.append(f"{path}: field {field!r} has too few items")
+        if "max_items" in rules and len(value) > rules["max_items"]:
+            errors.append(f"{path}: field {field!r} has too many items")
         item_type = rules.get("item_type")
         item_pattern = rules.get("item_pattern")
         for index, item in enumerate(value):
@@ -2638,6 +2671,14 @@ def validate(root: Path) -> list[str]:
                 )
                 continue
             _validate_declared_type(frontmatter[field], rules, path, field, errors)
+        if (
+            frontmatter.get("word_count_policy") == "external"
+            and "word_count_override_reason" not in frontmatter
+        ):
+            errors.append(
+                f"{path}: word_count_policy 'external' requires "
+                "word_count_override_reason"
+            )
         for field, expected in {"layout": "essay", "category": expected_category}.items():
             actual = frontmatter.get(field)
             if actual != expected:

@@ -1858,6 +1858,152 @@ class EditorialContractTests(unittest.TestCase):
                 self.assert_contract_error(expected_error)
                 path.write_text(original, encoding="utf-8")
 
+    def test_enforces_publication_list_bounds_with_exact_seed_placeholders(
+        self,
+    ) -> None:
+        mutations = (
+            (
+                "templates/guide.md",
+                "tags: [guide]",
+                "tags: [one, two, three, four, five, six, seven, eight, nine]",
+                "field 'tags' has too many items",
+            ),
+            (
+                "templates/guide.md",
+                "tags: [guide]",
+                "tags: [different]",
+                "field 'tags' has too few items",
+            ),
+            (
+                "templates/case-study.md",
+                "tags: []",
+                "tags: [different]",
+                "field 'tags' has too few items",
+            ),
+        )
+        for relative_path, current, replacement, expected_error in mutations:
+            with self.subTest(path=relative_path, replacement=replacement):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error(expected_error)
+
+                path.write_text(original, encoding="utf-8")
+
+    def test_external_word_count_policy_requires_a_valid_override_reason(self) -> None:
+        path = self.fixture_root / "templates/guide.md"
+        original = path.read_text(encoding="utf-8")
+        anchor = "word_count: 0\n"
+        self.assertIn(anchor, original)
+
+        path.write_text(
+            original.replace(
+                anchor,
+                anchor + "word_count_policy: external\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error(
+            "word_count_policy 'external' requires word_count_override_reason"
+        )
+
+        path.write_text(
+            original.replace(
+                anchor,
+                anchor
+                + "word_count_policy: external\n"
+                + "word_count_override_reason: too short\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("field 'word_count_override_reason' is shorter")
+
+        path.write_text(
+            original.replace(
+                anchor,
+                anchor
+                + "word_count_policy: external\n"
+                + "word_count_override_reason: Counts include generated appendices.\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual([], validate(self.fixture_root))
+
+    def test_requires_exact_schema_dependency_and_generated_context(self) -> None:
+        seed_path = self.fixture_root / "seed.yaml"
+        original_seed = seed_path.read_text(encoding="utf-8")
+        seed_mutations = (
+            (
+                "source: organvm-iv-taxis/schema-definitions",
+                "source: meta-organvm/schema-definitions",
+            ),
+            ("  - type: schema\n", "  - type: contract\n"),
+            (
+                "consumes:\n"
+                "  - type: schema\n"
+                "    source: organvm-iv-taxis/schema-definitions\n"
+                '    description: "Consumes the canonical project-record and '
+                'assertion-evidence schemas"\n',
+                "consumes: []\n",
+            ),
+        )
+        for current, replacement in seed_mutations:
+            with self.subTest(seed_replacement=replacement):
+                self.assertIn(current, original_seed)
+                seed_path.write_text(
+                    original_seed.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("seed.yaml: expected consumes=")
+                seed_path.write_text(original_seed, encoding="utf-8")
+
+        generated_lines = (
+            (
+                "AGENTS.md",
+                "- **Consume** `schema` from "
+                "[`organvm-iv-taxis/schema-definitions`]"
+                "(../../organvm-iv-taxis/schema-definitions/CLAUDE.md)",
+            ),
+            (
+                "CLAUDE.md",
+                "- **Consumes** ← `organvm-iv-taxis/schema-definitions`: schema",
+            ),
+            (
+                "GEMINI.md",
+                "- **Consumes** ← `organvm-iv-taxis/schema-definitions`: schema",
+            ),
+        )
+        for relative_path, canonical in generated_lines:
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertEqual(1, original.splitlines().count(canonical))
+                path.write_text(
+                    original.replace(
+                        canonical,
+                        canonical.replace(
+                            "organvm-iv-taxis/schema-definitions",
+                            "meta-organvm/schema-definitions",
+                        ),
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("canonical identity line")
+                path.write_text(original, encoding="utf-8")
+
+                path.write_text(
+                    original.replace(canonical, f"{canonical}\n{canonical}", 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("found 2")
+                path.write_text(original, encoding="utf-8")
+
     def test_rejects_string_instead_of_essay_list(self) -> None:
         path = self.fixture_root / "templates/guide.md"
         content = path.read_text(encoding="utf-8")

@@ -8,6 +8,7 @@
 - **Produces** → `ORGAN-V`: editorial-governance
 - **Produces** → `ORGAN-V`: frontmatter-schema
 - **Produces** → `ORGAN-V`: essay-templates
+- **Consumes** ← `organvm-iv-taxis/schema-definitions`: schema
 
 ### Siblings in Public Process
 `public-process`, `.github`, `analytics-engine`, `essay-pipeline`, `reading-observatory`

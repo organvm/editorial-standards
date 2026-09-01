@@ -42,7 +42,10 @@ produces:
         repos: ["public-process"]
         relationship: "provides-templates-for"
 
-consumes: []
+consumes:
+  - type: schema
+    source: organvm-iv-taxis/schema-definitions
+    description: "Consumes the canonical project-record and assertion-evidence schemas"
 
 subscriptions:
   - event: essay.published
