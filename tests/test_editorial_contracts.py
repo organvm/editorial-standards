@@ -117,6 +117,56 @@ class EditorialContractTests(unittest.TestCase):
 
         self.assert_contract_error("renderer does not cover schema rules")
 
+    def test_validates_optional_frontmatter_rules_without_template_values(self) -> None:
+        path = self.fixture_root / "schemas/frontmatter-schema.yaml"
+        original = path.read_text(encoding="utf-8")
+        optional_start = original.index("optional_fields:")
+
+        malformed = original.replace(
+            "  word_count_policy:\n",
+            "  word_count_policy: broken\n  ignored_policy:\n",
+            1,
+        )
+        path.write_text(malformed, encoding="utf-8")
+        self.assert_contract_error("rules for 'word_count_policy' are not a mapping")
+
+        invalid_type = (
+            original[:optional_start]
+            + original[optional_start:].replace(
+                "    type: string", "    type: boolean", 1
+            )
+        )
+        path.write_text(invalid_type, encoding="utf-8")
+        self.assert_contract_error("declare unsupported type 'boolean'")
+
+        invalid_bound = original.replace(
+            "    min_length: 20\n", "    min_length: -1\n", 1
+        )
+        path.write_text(invalid_bound, encoding="utf-8")
+        self.assert_contract_error("min_length must be a nonnegative integer")
+
+        incompatible_constraint = original.replace(
+            "    min_length: 20\n", "    min_items: 20\n", 1
+        )
+        path.write_text(incompatible_constraint, encoding="utf-8")
+        self.assert_contract_error("contain unsupported keys for 'string'")
+
+        invalid_pattern = original.replace(
+            "    min_length: 20\n", "    min_length: 20\n    pattern: '['\n", 1
+        )
+        path.write_text(invalid_pattern, encoding="utf-8")
+        self.assert_contract_error("has invalid pattern")
+
+        duplicate_scope = original.replace(
+            "optional_fields:\n",
+            "optional_fields:\n  title:\n    type: string\n"
+            "    description: duplicate scope\n",
+            1,
+        )
+        path.write_text(duplicate_scope, encoding="utf-8")
+        self.assert_contract_error("fields cannot be both required and optional")
+        path.write_text(original, encoding="utf-8")
+
     def test_rejects_gap_before_frontmatter_table_data(self) -> None:
         path = self.fixture_root / "README.md"
         original = path.read_text(encoding="utf-8")
@@ -308,6 +358,39 @@ class EditorialContractTests(unittest.TestCase):
                 )
                 self.assert_contract_error("has empty values")
                 path.write_text(original, encoding="utf-8")
+
+    def test_requires_populated_evidence_and_limitation_rows(self) -> None:
+        path = self.fixture_root / "templates/evidence.md"
+        original = path.read_text(encoding="utf-8")
+        rows = (
+            next(
+                line
+                for line in original.splitlines()
+                if line.startswith("| [claim-id] |")
+            ),
+            next(
+                line
+                for line in original.splitlines()
+                if line.startswith("| [limitation-id] |")
+            ),
+        )
+        for row in rows:
+            cells = row[1:-1].split("|")
+            for index in range(1, len(cells)):
+                with self.subTest(row=cells[0].strip(), empty_column=index):
+                    mutated_cells = cells.copy()
+                    mutated_cells[index] = " "
+                    mutated_row = "|" + "|".join(mutated_cells) + "|"
+                    path.write_text(
+                        original.replace(row, mutated_row, 1), encoding="utf-8"
+                    )
+                    self.assert_contract_error("has empty values")
+                    path.write_text(original, encoding="utf-8")
+
+        empty_assertion = "|" + "|".join(" " for _ in range(7)) + "|"
+        path.write_text(original.replace(rows[0], empty_assertion, 1), encoding="utf-8")
+        self.assert_contract_error("row labels/order mismatch")
+        path.write_text(original, encoding="utf-8")
 
     def test_requires_every_at_a_glance_row_contiguously(self) -> None:
         path = self.fixture_root / "templates/repository-readme-v2.md"
@@ -552,6 +635,51 @@ class EditorialContractTests(unittest.TestCase):
         self.assert_contract_error("duplicate local CI reproduction command")
         path.write_text(original, encoding="utf-8")
 
+    def test_binds_complete_multiline_yaml_command_to_hosted_ci(self) -> None:
+        readme_path = self.fixture_root / "README.md"
+        workflow_path = self.fixture_root / ".github/workflows/ci.yml"
+        original_readme = readme_path.read_text(encoding="utf-8")
+        original_workflow = workflow_path.read_text(encoding="utf-8")
+        command_lines = (
+            "data = yaml.safe_load(open(f))",
+            "if not isinstance(data, dict):",
+            "if errors:\n    sys.exit(1)",
+            "print(f'All {len(glob.glob(\\\"schemas/*.yaml\\\"))} schema files valid')",
+        )
+        for command_line in command_lines:
+            with self.subTest(readme_line=command_line):
+                self.assertIn(command_line, original_readme)
+                readme_path.write_text(
+                    original_readme.replace(command_line, "removed", 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(
+                    "local multiline YAML command must exactly reproduce hosted CI"
+                )
+                readme_path.write_text(original_readme, encoding="utf-8")
+
+        self.assertIn("data = yaml.safe_load(open(f))", original_workflow)
+        workflow_path.write_text(
+            original_workflow.replace(
+                "data = yaml.safe_load(open(f))", "data = {}", 1
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("drifted from the canonical mapping check")
+
+        readme_path.write_text(
+            original_readme.replace(
+                "data = yaml.safe_load(open(f))", "data = {}", 1
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("drifted from the canonical mapping check")
+        self.assert_contract_error(
+            "local multiline YAML command must exactly reproduce hosted CI"
+        )
+        readme_path.write_text(original_readme, encoding="utf-8")
+        workflow_path.write_text(original_workflow, encoding="utf-8")
+
     def test_rejects_fenced_reader_structure_and_canonical_link(self) -> None:
         path = self.fixture_root / "templates/audiences/general.md"
         original = path.read_text(encoding="utf-8")
@@ -575,6 +703,62 @@ class EditorialContractTests(unittest.TestCase):
         errors = validate(self.fixture_root)
         self.assertTrue(any("missing required template marker" in error for error in errors))
         self.assertTrue(any("missing canonical project link" in error for error in errors))
+
+    def test_ignores_html_comment_tokens_inside_fenced_code(self) -> None:
+        paths = (
+            self.fixture_root / "README.md",
+            self.fixture_root / "docs/reader-mode-documentation.md",
+            self.fixture_root / "templates/audiences/general.md",
+        )
+        for path in paths:
+            original = path.read_text(encoding="utf-8")
+            for opening, closing in (("```html", "```"), ("~~~html", "~~~")):
+                with self.subTest(path=path.name, opening=opening):
+                    path.write_text(
+                        original
+                        + f"\n{opening}\n<!-- unmatched example token\n{closing}\n",
+                        encoding="utf-8",
+                    )
+                    self.assertEqual([], validate(self.fixture_root))
+            path.write_text(
+                original + "\nInline code preserves `<!-- unmatched example token`.\n",
+                encoding="utf-8",
+            )
+            self.assertEqual([], validate(self.fixture_root))
+            path.write_text(original, encoding="utf-8")
+
+    def test_rejects_reader_contracts_hidden_in_raw_html_blocks(self) -> None:
+        path = self.fixture_root / "templates/audiences/general.md"
+        original = path.read_text(encoding="utf-8")
+        lines = original.splitlines()
+        self.assertTrue(lines[0].startswith("# "))
+        literal_blocks = (
+            ('<script type="text/plain">', "</script>"),
+            ("<style>", "</style>"),
+            ("<pre>", "</pre>"),
+            ("<textarea>", "</textarea>"),
+        )
+        for opening, closing in literal_blocks:
+            with self.subTest(opening=opening):
+                hidden = "\n".join((lines[0], "", opening, *lines[1:], closing, ""))
+                path.write_text(hidden, encoding="utf-8")
+                errors = validate(self.fixture_root)
+                self.assertTrue(
+                    any("missing required template marker" in error for error in errors)
+                )
+                self.assertTrue(
+                    any("missing canonical project link" in error for error in errors)
+                )
+
+        visible_contract = [line for line in lines[1:] if line.strip()]
+        for opening, closing in (("<div>", "</div>"), ("<x-hidden>", "</x-hidden>")):
+            with self.subTest(opening=opening):
+                hidden = "\n".join(
+                    (lines[0], "", opening, *visible_contract, closing, "")
+                )
+                path.write_text(hidden, encoding="utf-8")
+                self.assert_contract_error("missing required template marker")
+        path.write_text(original, encoding="utf-8")
 
     def test_rejects_tag_governance_drift(self) -> None:
         path = self.fixture_root / "schemas/tag-governance.yaml"

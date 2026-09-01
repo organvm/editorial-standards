@@ -90,6 +90,28 @@ REQUIRED_LOCAL_CI_COMMANDS = (
     "python3 -m py_compile scripts/validate_editorial_contracts.py tests/test_editorial_contracts.py",
     "git diff --check",
 )
+REQUIRED_YAML_VALIDATION_COMMAND = "\n".join(
+    (
+        'python3 -c "',
+        "import yaml, glob, sys",
+        "errors = 0",
+        "for f in glob.glob('schemas/*.yaml'):",
+        "    try:",
+        "        data = yaml.safe_load(open(f))",
+        "        if not isinstance(data, dict):",
+        "            print(f'::error file={f}::Not a valid YAML mapping')",
+        "            errors += 1",
+        "        else:",
+        "            print(f'::notice file={f}::Valid ({len(data)} top-level keys)')",
+        "    except Exception as e:",
+        "        print(f'::error file={f}::{e}')",
+        "        errors += 1",
+        "if errors:",
+        "    sys.exit(1)",
+        "print(f'All {len(glob.glob(\\\"schemas/*.yaml\\\"))} schema files valid')",
+        '"',
+    )
+)
 CANONICAL_MAPPING_IDENTITIES = {
     Path("seed.yaml"): {
         "org": CANONICAL_ORGANIZATION,
@@ -408,6 +430,22 @@ REQUIRED_READER_TABLE_ROW_LABELS = {
         "**Evidence**",
         "**Known limitations**",
     ),
+    (
+        Path("templates/evidence.md"),
+        (
+            "ID",
+            "Claim",
+            "Claim posture",
+            "Assertion class",
+            "Verification state",
+            "Evidence",
+            "Freshness",
+        ),
+    ): ("[claim-id]",),
+    (
+        Path("templates/evidence.md"),
+        ("ID", "Limitation", "Related assertion"),
+    ): ("[limitation-id]",),
 }
 REQUIRED_READER_TABLE_SECTIONS = {
     (
@@ -529,6 +567,124 @@ def _matches_pattern(
     except re.error as exc:
         errors.append(f"{context}: invalid schema regex pattern: {exc}")
         return None
+
+
+def _validate_frontmatter_rule_definition(
+    field: str,
+    rules: Any,
+    errors: list[str],
+) -> None:
+    """Validate every schema rule, even when no template instantiates the field."""
+    context = f"schemas/frontmatter-schema.yaml: rules for {field!r}"
+    if not isinstance(rules, dict):
+        errors.append(f"{context} are not a mapping")
+        return
+
+    expected_type = rules.get("type")
+    supported_types = {"string", "integer", "list", "object"}
+    if expected_type not in supported_types:
+        errors.append(f"{context} declare unsupported type {expected_type!r}")
+
+    allowed_rule_keys = {"type", "description", "enum"}
+    allowed_rule_keys.update(
+        {
+            "string": {"min_length", "max_length", "pattern", "format"},
+            "integer": {"min", "max"},
+            "list": {"min_items", "max_items", "item_type", "item_pattern"},
+            "object": {"properties", "required_keys"},
+        }.get(expected_type, set())
+    )
+    unsupported_rule_keys = sorted(set(rules) - allowed_rule_keys)
+    if unsupported_rule_keys:
+        errors.append(
+            f"{context} contain unsupported keys for {expected_type!r}: "
+            f"{unsupported_rule_keys}"
+        )
+
+    description = rules.get("description")
+    if not isinstance(description, str) or not description.strip():
+        errors.append(f"{context} need a nonempty description")
+
+    enum = rules.get("enum")
+    if enum is not None:
+        if not isinstance(enum, list) or not enum:
+            errors.append(f"{context} enum must be a nonempty list")
+        elif expected_type in supported_types:
+            invalid_values = [
+                value for value in enum if not _matches_type(value, expected_type)
+            ]
+            if invalid_values:
+                errors.append(
+                    f"{context} enum values do not match type {expected_type!r}: "
+                    f"{invalid_values}"
+                )
+            if len({repr(value) for value in enum}) != len(enum):
+                errors.append(f"{context} enum contains duplicate values")
+
+    for lower_key, upper_key in (
+        ("min_length", "max_length"),
+        ("min_items", "max_items"),
+        ("min", "max"),
+    ):
+        lower = rules.get(lower_key)
+        upper = rules.get(upper_key)
+        for key, value in ((lower_key, lower), (upper_key, upper)):
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 0
+            ):
+                errors.append(f"{context} {key} must be a nonnegative integer")
+        if (
+            isinstance(lower, int)
+            and not isinstance(lower, bool)
+            and isinstance(upper, int)
+            and not isinstance(upper, bool)
+            and lower > upper
+        ):
+            errors.append(f"{context} {lower_key} exceeds {upper_key}")
+
+    for pattern_key in ("pattern", "item_pattern"):
+        pattern = rules.get(pattern_key)
+        if pattern is None:
+            continue
+        if not isinstance(pattern, str):
+            errors.append(f"{context} {pattern_key} must be a string")
+            continue
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            errors.append(f"{context} has invalid {pattern_key}: {exc}")
+
+    schema_format = rules.get("format")
+    if schema_format is not None and not isinstance(schema_format, str):
+        errors.append(f"{context} format must be a string")
+
+    if expected_type == "list":
+        item_type = rules.get("item_type")
+        if item_type not in supported_types:
+            errors.append(f"{context} declare unsupported item_type {item_type!r}")
+        if "item_pattern" in rules and item_type != "string":
+            errors.append(f"{context} item_pattern requires item_type 'string'")
+    elif expected_type == "object":
+        properties = rules.get("properties")
+        required_keys = rules.get("required_keys", [])
+        if not isinstance(properties, dict):
+            errors.append(f"{context} properties must be a mapping")
+        else:
+            for child_field, child_rules in properties.items():
+                _validate_frontmatter_rule_definition(
+                    f"{field}.{child_field}", child_rules, errors
+                )
+        if not isinstance(required_keys, list) or not all(
+            isinstance(key, str) for key in required_keys
+        ):
+            errors.append(f"{context} required_keys must be a list of strings")
+        elif isinstance(properties, dict):
+            unknown_required = sorted(set(required_keys) - set(properties))
+            if unknown_required:
+                errors.append(
+                    f"{context} required_keys reference unknown properties: "
+                    f"{unknown_required}"
+                )
 
 
 def _validate_declared_type(
@@ -700,24 +856,6 @@ def _table_cells(line: str) -> list[str] | None:
     return [cell.strip() for cell in stripped[1:-1].split("|")]
 
 
-def _without_html_comments(path: Path, content: str, errors: list[str]) -> str:
-    """Remove rendered-invisible HTML comments, including multiline regions."""
-    visible: list[str] = []
-    cursor = 0
-    while True:
-        start = content.find("<!--", cursor)
-        if start < 0:
-            visible.append(content[cursor:])
-            break
-        visible.append(content[cursor:start])
-        end = content.find("-->", start + 4)
-        if end < 0:
-            errors.append(f"{path}: unclosed HTML comment")
-            break
-        cursor = end + 3
-    return "".join(visible)
-
-
 def _is_indented_code_line(line: str) -> bool:
     """Return whether CommonMark treats a leading whitespace run as code."""
     column = 0
@@ -733,37 +871,226 @@ def _is_indented_code_line(line: str) -> bool:
     return False
 
 
-def _rendered_markdown_lines(
+RAW_HTML_LITERAL_TAGS = ("pre", "script", "style", "textarea")
+RAW_HTML_BLOCK_TAGS = (
+    "address",
+    "article",
+    "aside",
+    "base",
+    "basefont",
+    "blockquote",
+    "body",
+    "caption",
+    "center",
+    "col",
+    "colgroup",
+    "dd",
+    "details",
+    "dialog",
+    "dir",
+    "div",
+    "dl",
+    "dt",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "form",
+    "frame",
+    "frameset",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "head",
+    "header",
+    "hr",
+    "html",
+    "iframe",
+    "legend",
+    "li",
+    "link",
+    "main",
+    "menu",
+    "menuitem",
+    "nav",
+    "noframes",
+    "ol",
+    "optgroup",
+    "option",
+    "p",
+    "param",
+    "search",
+    "section",
+    "summary",
+    "table",
+    "tbody",
+    "td",
+    "tfoot",
+    "th",
+    "thead",
+    "title",
+    "tr",
+    "track",
+    "ul",
+)
+RAW_HTML_LITERAL_START = re.compile(
+    rf"^[ ]{{0,3}}<(?P<tag>{'|'.join(RAW_HTML_LITERAL_TAGS)})(?=[\s>])",
+    re.IGNORECASE,
+)
+RAW_HTML_BLOCK_START = re.compile(
+    rf"^[ ]{{0,3}}</?(?:{'|'.join(RAW_HTML_BLOCK_TAGS)})(?=[\s/>])",
+    re.IGNORECASE,
+)
+RAW_HTML_GENERIC_START = re.compile(
+    r"^[ ]{0,3}</?[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*)?/?>[ \t]*$"
+)
+
+
+def _strip_html_comments_from_line(
+    line: str,
+    in_comment: bool,
+) -> tuple[str, bool]:
+    """Strip comments outside code fences while retaining visible line fragments."""
+    visible: list[str] = []
+    cursor = 0
+    while cursor < len(line):
+        if in_comment:
+            end = line.find("-->", cursor)
+            if end < 0:
+                return "".join(visible), True
+            in_comment = False
+            cursor = end + 3
+            continue
+        comment_start = line.find("<!--", cursor)
+        code_start = line.find("`", cursor)
+        if code_start >= 0 and (comment_start < 0 or code_start < comment_start):
+            code_length = len(line[code_start:]) - len(line[code_start:].lstrip("`"))
+            code_end = line.find("`", code_start + code_length)
+            while code_end >= 0:
+                closing_length = len(line[code_end:]) - len(
+                    line[code_end:].lstrip("`")
+                )
+                if closing_length == code_length:
+                    break
+                code_end = line.find("`", code_end + closing_length)
+            if code_end >= 0:
+                code_end += code_length
+                visible.append(line[cursor:code_end])
+                cursor = code_end
+                continue
+        if comment_start < 0:
+            visible.append(line[cursor:])
+            break
+        visible.append(line[cursor:comment_start])
+        in_comment = True
+        cursor = comment_start + 4
+    return "".join(visible), in_comment
+
+
+def _markdown_contract_view(
     path: Path, content: str, errors: list[str]
-) -> list[str]:
-    """Remove rendered-invisible comments and fences from Markdown contracts."""
-    content = _without_html_comments(path, content, errors)
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Return rendered contract lines and visible fenced blocks in one pass."""
     rendered: list[str] = []
+    fenced_blocks: list[tuple[str, str]] = []
     fence_character: str | None = None
     fence_length = 0
+    fence_info = ""
+    fence_lines: list[str] = []
+    in_comment = False
+    raw_html_end: re.Pattern[str] | None = None
+    raw_html_until_blank = False
+
     for line in content.splitlines():
+        if fence_character is not None:
+            stripped = line.lstrip()
+            fence = None if _is_indented_code_line(line) else re.match(
+                r"(`{3,}|~{3,})", stripped
+            )
+            if (
+                fence is not None
+                and fence.group(1)[0] == fence_character
+                and len(fence.group(1)) >= fence_length
+                and not stripped[len(fence.group(1)) :].strip()
+            ):
+                fenced_blocks.append((fence_info, "\n".join(fence_lines)))
+                fence_character = None
+                fence_length = 0
+                fence_info = ""
+                fence_lines = []
+            else:
+                fence_lines.append(line)
+            continue
+
+        if raw_html_end is not None:
+            if raw_html_end.search(line):
+                raw_html_end = None
+            continue
+        if raw_html_until_blank:
+            if not line.strip():
+                raw_html_until_blank = False
+            continue
+
+        line, in_comment = _strip_html_comments_from_line(line, in_comment)
+        if not line.strip():
+            rendered.append(line)
+            continue
+
         stripped = line.lstrip()
         if _is_indented_code_line(line):
             continue
         fence = re.match(r"(`{3,}|~{3,})", stripped)
-        if fence_character is None:
-            if fence is None:
-                rendered.append(line)
-            else:
-                fence_character = fence.group(1)[0]
-                fence_length = len(fence.group(1))
+        if fence is not None:
+            fence_character = fence.group(1)[0]
+            fence_length = len(fence.group(1))
+            fence_info = stripped[len(fence.group(1)) :].strip().lower()
             continue
-        if (
-            fence is not None
-            and fence.group(1)[0] == fence_character
-            and len(fence.group(1)) >= fence_length
-            and not stripped[len(fence.group(1)) :].strip()
+
+        raw_special: tuple[re.Match[str], re.Pattern[str]] | None = None
+        for start_pattern, end_pattern in (
+            (r"^[ ]{0,3}<\?", re.compile(r"\?>")),
+            (r"^[ ]{0,3}<!\[CDATA\[", re.compile(r"\]\]>")),
+            (r"^[ ]{0,3}<![A-Z]", re.compile(r">")),
         ):
-            fence_character = None
-            fence_length = 0
+            start_match = re.match(start_pattern, line)
+            if start_match is not None:
+                raw_special = (start_match, end_pattern)
+                break
+        if raw_special is not None:
+            start_match, closing = raw_special
+            if not closing.search(line, start_match.end()):
+                raw_html_end = closing
+            continue
+
+        literal_start = RAW_HTML_LITERAL_START.match(line)
+        if literal_start is not None:
+            tag = literal_start.group("tag")
+            closing = re.compile(rf"</{re.escape(tag)}\s*>", re.IGNORECASE)
+            if closing.search(line, literal_start.end()):
+                continue
+            raw_html_end = closing
+            continue
+        if RAW_HTML_BLOCK_START.match(line) or RAW_HTML_GENERIC_START.match(line):
+            raw_html_until_blank = True
+            continue
+
+        rendered.append(line)
+
     if fence_character is not None:
         errors.append(f"{path}: unclosed Markdown code fence")
-    return rendered
+    if in_comment:
+        errors.append(f"{path}: unclosed HTML comment")
+    return rendered, fenced_blocks
+
+
+def _rendered_markdown_lines(
+    path: Path, content: str, errors: list[str]
+) -> list[str]:
+    """Remove rendered-invisible blocks from Markdown contracts."""
+    return _markdown_contract_view(path, content, errors)[0]
 
 
 def _format_enum(values: Any) -> str:
@@ -995,15 +1322,15 @@ def _validate_readme(
 ) -> None:
     readme_path = root / "README.md"
     raw_readme = readme_path.read_text(encoding="utf-8")
-    command_readme = _without_html_comments(Path("README.md"), raw_readme, errors)
-    rendered_readme = "\n".join(
-        _rendered_markdown_lines(Path("README.md"), raw_readme, errors)
+    rendered_lines, _ = _markdown_contract_view(
+        Path("README.md"), raw_readme, errors
     )
+    rendered_readme = "\n".join(rendered_lines)
     required_fields = set(required_map)
-    command_development_parts = command_readme.split("## Development", 1)
-    command_development_section = (
-        command_development_parts[1].split("\n## ", 1)[0]
-        if len(command_development_parts) == 2
+    source_development_parts = raw_readme.split("## Development", 1)
+    source_development_section = (
+        source_development_parts[1].split("\n## ", 1)[0]
+        if len(source_development_parts) == 2
         else ""
     )
     rendered_development_parts = rendered_readme.split("## Development", 1)
@@ -1012,11 +1339,12 @@ def _validate_readme(
         if len(rendered_development_parts) == 2
         else ""
     )
-    bash_blocks = re.findall(
-        r"^```bash[ \t]*\n(.*?)^```[ \t]*$",
-        command_development_section,
-        re.DOTALL | re.MULTILINE,
+    _, development_fences = _markdown_contract_view(
+        Path("README.md"), source_development_section, errors
     )
+    bash_blocks = [
+        body for info, body in development_fences if info.partition(" ")[0] == "bash"
+    ]
     executable_bash_lines = [
         line.strip()
         for block in bash_blocks
@@ -1053,6 +1381,43 @@ def _validate_readme(
         errors.append(
             "README.md: local CI reproduction commands must follow hosted CI order"
         )
+
+    workflow = _load_yaml(root / ".github/workflows/ci.yml", errors)
+    jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
+    validate_job = jobs.get("validate") if isinstance(jobs, dict) else None
+    workflow_steps = (
+        validate_job.get("steps") if isinstance(validate_job, dict) else None
+    )
+    if not isinstance(workflow_steps, list):
+        workflow_steps = []
+    hosted_yaml_commands = [
+        step.get("run")
+        for step in workflow_steps
+        if isinstance(step, dict) and step.get("name") == "Validate YAML schemas"
+    ]
+    if len(hosted_yaml_commands) != 1 or not isinstance(hosted_yaml_commands[0], str):
+        errors.append(
+            ".github/workflows/ci.yml: expected exactly one multiline YAML "
+            "validation command"
+        )
+    else:
+        hosted_yaml_command = hosted_yaml_commands[0].strip("\n")
+        if hosted_yaml_command != REQUIRED_YAML_VALIDATION_COMMAND:
+            errors.append(
+                ".github/workflows/ci.yml: multiline YAML validation command "
+                "drifted from the canonical mapping check"
+            )
+        exact_hosted_prefixes = [
+            block
+            for block in bash_blocks
+            if block == REQUIRED_YAML_VALIDATION_COMMAND
+            or block.startswith(f"{REQUIRED_YAML_VALIDATION_COMMAND}\n")
+        ]
+        if len(exact_hosted_prefixes) != 1:
+            errors.append(
+                "README.md: local multiline YAML command must exactly reproduce "
+                "hosted CI"
+            )
     obsolete_field_guidance = (
         "Must match the `slug` frontmatter field",
         "No markdown in the abstract field",
@@ -1669,6 +2034,14 @@ def validate(root: Path) -> list[str]:
     if not isinstance(required_map, dict) or not isinstance(optional_map, dict):
         errors.append("schemas/frontmatter-schema.yaml: fields must be YAML mappings")
         return errors
+    duplicate_schema_fields = sorted(set(required_map) & set(optional_map))
+    if duplicate_schema_fields:
+        errors.append(
+            "schemas/frontmatter-schema.yaml: fields cannot be both required and "
+            f"optional: {duplicate_schema_fields}"
+        )
+    for field, rules in (*required_map.items(), *optional_map.items()):
+        _validate_frontmatter_rule_definition(field, rules, errors)
     required_fields = set(required_map)
     allowed_fields = required_fields | set(optional_map)
     _validate_tag_governance(root, required_map.get("tags"), errors)

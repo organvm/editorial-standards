@@ -314,12 +314,16 @@ for f in glob.glob('schemas/*.yaml'):
     try:
         data = yaml.safe_load(open(f))
         if not isinstance(data, dict):
-            print(f'ERROR: {f}: not a YAML mapping')
+            print(f'::error file={f}::Not a valid YAML mapping')
             errors += 1
+        else:
+            print(f'::notice file={f}::Valid ({len(data)} top-level keys)')
     except Exception as e:
-        print(f'ERROR: {f}: {e}')
+        print(f'::error file={f}::{e}')
         errors += 1
-sys.exit(1 if errors else 0)
+if errors:
+    sys.exit(1)
+print(f'All {len(glob.glob(\"schemas/*.yaml\"))} schema files valid')
 "
 python3 scripts/validate_editorial_contracts.py
 python3 -m unittest discover -s tests -v
