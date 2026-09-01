@@ -110,6 +110,25 @@ REQUIRED_READER_MARKERS = {
         "## Inspection paths",
     ),
 }
+REQUIRED_READER_TABLES = {
+    Path("templates/repository-readme-v2.md"): (
+        ("I am reading as…", "Start here"),
+        ("", ""),
+    ),
+    Path("templates/evidence.md"): (
+        (
+            "ID",
+            "Claim",
+            "Claim posture",
+            "Assertion class",
+            "Verification state",
+            "Evidence",
+            "Freshness",
+        ),
+        ("ID", "Limitation", "Related assertion"),
+    ),
+}
+TABLE_DELIMITER_CELL = re.compile(r"^:?-{3,}:?$")
 
 
 def _load_yaml(path: Path, errors: list[str]) -> Any:
@@ -296,6 +315,82 @@ def _table_cells(line: str) -> list[str] | None:
     return [cell.strip() for cell in stripped[1:-1].split("|")]
 
 
+def _validate_required_reader_table(
+    path: Path,
+    lines: list[str],
+    header: tuple[str, ...],
+    errors: list[str],
+) -> None:
+    """Validate one required Markdown table without interpreting its prose."""
+    matching_headers = [
+        index for index, line in enumerate(lines) if _table_cells(line) == list(header)
+    ]
+    label = " | ".join(header)
+    if len(matching_headers) != 1:
+        errors.append(
+            f"{path}: required table header {label!r} must appear exactly once"
+        )
+        return
+
+    header_index = matching_headers[0]
+    if header_index + 1 >= len(lines):
+        errors.append(f"{path}: required table {label!r} is missing its delimiter")
+        return
+
+    delimiter_cells = _table_cells(lines[header_index + 1])
+    delimiter_valid = (
+        delimiter_cells is not None
+        and len(delimiter_cells) == len(header)
+        and all(TABLE_DELIMITER_CELL.fullmatch(cell) for cell in delimiter_cells)
+    )
+    if not delimiter_valid:
+        errors.append(f"{path}: required table {label!r} has an invalid delimiter")
+
+    data_rows = 0
+    for row_number, line in enumerate(lines[header_index + 2 :], start=1):
+        if not line.lstrip().startswith("|"):
+            break
+        cells = _table_cells(line)
+        if cells is None or len(cells) != len(header):
+            actual_columns = len(cells) if cells is not None else 0
+            errors.append(
+                f"{path}: required table {label!r} row {row_number} has "
+                f"{actual_columns} columns; expected {len(header)}"
+            )
+            continue
+        data_rows += 1
+
+    if data_rows == 0:
+        errors.append(f"{path}: required table {label!r} has no data rows")
+
+
+def _validate_reader_structure(
+    path: Path,
+    lines: list[str],
+    markers: tuple[str, ...],
+    errors: list[str],
+) -> None:
+    """Require reader markers exactly once and in their declared sequence."""
+    positions: list[int] = []
+    complete = True
+    for marker in markers:
+        occurrences = [index for index, line in enumerate(lines) if line == marker]
+        if not occurrences:
+            errors.append(f"{path}: missing required template marker {marker!r}")
+            complete = False
+        elif len(occurrences) > 1:
+            errors.append(f"{path}: duplicate required template marker {marker!r}")
+            complete = False
+        else:
+            positions.append(occurrences[0])
+
+    if complete and any(left >= right for left, right in zip(positions, positions[1:])):
+        errors.append(f"{path}: required template markers are out of order")
+
+    for header in REQUIRED_READER_TABLES.get(path, ()):
+        _validate_required_reader_table(path, lines, header, errors)
+
+
 def _validate_readme(
     root: Path, required_fields: set[str], errors: list[str]
 ) -> None:
@@ -409,6 +504,12 @@ def validate(root: Path) -> list[str]:
             "reader-mode marker contracts do not match declared templates: "
             f"{list(map(str, marker_contract_gap))}"
         )
+    table_contract_gap = sorted(set(REQUIRED_READER_TABLES) - READER_MODE_TEMPLATES)
+    if table_contract_gap:
+        errors.append(
+            "reader-mode table contracts reference undeclared templates: "
+            f"{list(map(str, table_contract_gap))}"
+        )
 
     frontmatters: dict[Path, dict[str, Any]] = {}
     for relative_path in sorted(PUBLICATION_TEMPLATES):
@@ -509,11 +610,12 @@ def validate(root: Path) -> list[str]:
         if not content.lstrip().startswith("# "):
             errors.append(f"{relative_path}: must start with a level-one heading")
         content_lines = content.splitlines()
-        for marker in REQUIRED_READER_MARKERS.get(relative_path, ()):
-            if marker not in content_lines:
-                errors.append(
-                    f"{relative_path}: missing required template marker {marker!r}"
-                )
+        _validate_reader_structure(
+            relative_path,
+            content_lines,
+            REQUIRED_READER_MARKERS.get(relative_path, ()),
+            errors,
+        )
         if (
             relative_path in AUDIENCE_TEMPLATES
             and f"- {CANONICAL_README_LINK}" not in content_lines

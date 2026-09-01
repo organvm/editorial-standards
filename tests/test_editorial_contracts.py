@@ -111,6 +111,120 @@ class EditorialContractTests(unittest.TestCase):
                 )
                 path.write_text(content, encoding="utf-8")
 
+    def test_rejects_malformed_required_reader_table_delimiters(self) -> None:
+        required_tables = (
+            (
+                "templates/repository-readme-v2.md",
+                "| I am reading as… | Start here |",
+            ),
+            ("templates/repository-readme-v2.md", "| | |"),
+            (
+                "templates/evidence.md",
+                "| ID | Claim | Claim posture | Assertion class | "
+                "Verification state | Evidence | Freshness |",
+            ),
+            ("templates/evidence.md", "| ID | Limitation | Related assertion |"),
+        )
+        for relative_path, header in required_tables:
+            for replacement in ("", "| not-a-delimiter |"):
+                with self.subTest(
+                    path=relative_path,
+                    header=header,
+                    replacement=replacement,
+                ):
+                    path = self.fixture_root / relative_path
+                    original = path.read_text(encoding="utf-8")
+                    lines = original.splitlines()
+                    header_index = lines.index(header)
+                    self.assertTrue(lines[header_index + 1].startswith("|---"))
+                    lines[header_index + 1] = replacement
+                    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+                    self.assert_contract_error("has an invalid delimiter")
+                    path.write_text(original, encoding="utf-8")
+
+    def test_rejects_required_reader_table_rows_with_wrong_column_count(self) -> None:
+        required_tables = (
+            (
+                "templates/repository-readme-v2.md",
+                "| I am reading as… | Start here |",
+            ),
+            ("templates/repository-readme-v2.md", "| | |"),
+            (
+                "templates/evidence.md",
+                "| ID | Claim | Claim posture | Assertion class | "
+                "Verification state | Evidence | Freshness |",
+            ),
+            ("templates/evidence.md", "| ID | Limitation | Related assertion |"),
+        )
+        for relative_path, header in required_tables:
+            with self.subTest(path=relative_path, header=header):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                lines = original.splitlines()
+                header_index = lines.index(header)
+                row_index = header_index + 2
+                cells = lines[row_index].strip()[1:-1].split("|")
+                self.assertGreater(len(cells), 1)
+                lines[row_index] = "|" + "|".join(cells[:-1]) + "|"
+                path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+                self.assert_contract_error("columns; expected")
+                path.write_text(original, encoding="utf-8")
+
+    def test_rejects_reordered_reader_template_markers(self) -> None:
+        reordered_markers = {
+            "templates/repository-readme-v2.md": (
+                "## What am I looking at?",
+                "## Canonical project documentation",
+            ),
+            "templates/evidence.md": (
+                "## Assertion evidence",
+                "## Project limitations",
+            ),
+            "templates/audiences/business.md": (
+                "## Existing operational problem",
+                "## Technical appendix and evidence",
+            ),
+            "templates/audiences/evaluator.md": (
+                "## Initial condition",
+                "## Inspection map",
+            ),
+            "templates/audiences/general.md": (
+                "## What is this?",
+                "## Where to go next",
+            ),
+            "templates/audiences/humanities.md": (
+                "## Central question",
+                "## Further reading and evidence",
+            ),
+            "templates/audiences/technical.md": (
+                "## Implementation status",
+                "## Inspection paths",
+            ),
+        }
+        for relative_path, (first, last) in reordered_markers.items():
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                lines = original.splitlines()
+                first_index = lines.index(first)
+                last_index = lines.index(last)
+                lines[first_index], lines[last_index] = lines[last_index], lines[first_index]
+                path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+                self.assert_contract_error("required template markers are out of order")
+                path.write_text(original, encoding="utf-8")
+
+    def test_rejects_duplicate_reader_template_marker(self) -> None:
+        path = self.fixture_root / "templates/audiences/general.md"
+        content = path.read_text(encoding="utf-8")
+        marker = "## What is this?"
+        self.assertEqual(1, content.splitlines().count(marker))
+        path.write_text(content + f"\n{marker}\n", encoding="utf-8")
+
+        self.assert_contract_error("duplicate required template marker")
+
     def test_rejects_scalar_instead_of_essay_list(self) -> None:
         path = self.fixture_root / "templates/guide.md"
         content = path.read_text(encoding="utf-8")
