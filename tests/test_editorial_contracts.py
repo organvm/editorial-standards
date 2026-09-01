@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from validate_editorial_contracts import (  # noqa: E402
+    _count_visible_markdown_link,
     _find_backtick_run,
     _markdown_destination_prefix,
     _markdown_label_end_map,
@@ -3457,9 +3458,57 @@ class EditorialContractTests(unittest.TestCase):
                 r"[Project <https://example.test/`> home]"
                 r"(../../README.md) trailing \`"
             ),
+            r"[Project <?probe `?> home](../../README.md) trailing \`",
+            r"[Project <!DECL `> home](../../README.md) trailing \`",
+            (
+                r"[Project <![CDATA[`payload]]> home]"
+                r"(../../README.md) trailing \`"
+            ),
             (
                 '[Project <span data-close="]">home</span>]'
                 "(../../README.md)"
+            ),
+            '<a href="../../README.md">Project home</a>',
+            (
+                '<A class="route" HREF=../../README.md>'
+                "Project home</A>"
+            ),
+            (
+                '<a href="../../README&#46;md&#35;top">'
+                "Project home</a>"
+            ),
+            (
+                '<a href=" ../../README%2Emd?source=raw ">'
+                "Project home</a>"
+            ),
+            (
+                '<a href="../../README.md" href="elsewhere.md">'
+                "Project home</a>"
+            ),
+            "[Project home](../../README&#46;md)",
+            "Visible <?probe [Project home](../../README.md)>",
+            "Visible <!DECL [Project home](../../README.md)",
+            "Visible <![CDATA[[Project home](../../README.md)]]",
+            (
+                "![decoy [Project home](../../README.md)]"
+                "[blank-third-title]\n"
+                "[blank-third-title]:\n"
+                "  image.png\n"
+                "\n"
+                '  "[Project home](../../README.md)"'
+            ),
+            (
+                "![decoy [Project home](../../README.md)]"
+                "[already-titled]\n"
+                '[already-titled]: image.png "Image title"\n'
+                '  "[Project home](../../README.md)"'
+            ),
+            (
+                "![decoy [Project home](../../README.md)]"
+                "[bad-third-title]\n"
+                "[bad-third-title]:\n"
+                "  image.png\n"
+                '  "[Project home](../../README.md)" trailing-garbage'
             ),
             r"![decoy](image\ [Project home](../../README.md))",
         )
@@ -3476,6 +3525,30 @@ class EditorialContractTests(unittest.TestCase):
             "[Project home][missing]\n\n[project home]: ../../README.md",
             "[Project home]\n\n(../../README.md)",
             '<pre>\n<a href="../../README.md">Project home</a>\n</pre>',
+            "<?probe [Project home](../../README.md)?>",
+            "<!DECL [Project home](../../README.md)>",
+            "<![CDATA[[Project home](../../README.md)]]>",
+            '`<a href="../../README.md">Project home</a>`',
+            '<!-- <a href="../../README.md">Project home</a> -->',
+            (
+                '```html\n<a href="../../README.md">Project home</a>\n```'
+            ),
+            r'\<a href="../../README.md">Project home</a>',
+            '<a data-href="../../README.md">Project home</a>',
+            (
+                '<a href="elsewhere.md" href="../../README.md">'
+                "Project home</a>"
+            ),
+            '<a href href="../../README.md">Project home</a>',
+            (
+                '<a href="../../README.md" broken==>'
+                "Project home</a>"
+            ),
+            (
+                '<a href="../../README.md%23not-fragment">'
+                "Project home</a>"
+            ),
+            "[Project home](../../README.md%23not-fragment)",
             "![Project image][image-home]\n\n[image-home]: ../../README.md",
             (
                 "![Project image][image-title]\n\n"
@@ -3505,6 +3578,19 @@ class EditorialContractTests(unittest.TestCase):
             (
                 "![decoy [Project home](../../README.md)][image-home]"
                 "\n\n[image-home]: image.png"
+            ),
+            (
+                "![decoy [Project home](../../README.md)]"
+                "[continued-title]\n"
+                "[continued-title]:\n"
+                "  image.png\n"
+                '  "[Project home](../../README.md)"'
+            ),
+            (
+                "![decoy [Project home](../../README.md)]"
+                "[inline-destination-title]\n"
+                "[inline-destination-title]: image.png\n"
+                '  "[Project home](../../README.md)"'
             ),
             (
                 "![Project image][]"
@@ -3624,6 +3710,29 @@ class EditorialContractTests(unittest.TestCase):
         )
 
         self.assertEqual([], validate(self.fixture_root))
+
+    def test_handles_many_ignored_spans_before_brackets_in_one_pass(
+        self,
+    ) -> None:
+        path = self.fixture_root / "templates/audiences/general.md"
+        original = path.read_text(encoding="utf-8")
+        path.write_text(
+            original
+            + "\n"
+            + ("`x`" * 10_000)
+            + ("[" * 10_000)
+            + "\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual([], validate(self.fixture_root))
+
+        expected = "[Project home](../../README.md)"
+        line = ("`x`" * 10_000) + (expected * 10_000)
+        self.assertEqual(
+            10_000,
+            _count_visible_markdown_link([line], expected),
+        )
 
     def test_rejects_missing_reader_template_structure(self) -> None:
         required_markers = {

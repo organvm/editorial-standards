@@ -9,6 +9,7 @@ import posixpath
 import re
 import sys
 from datetime import date
+from html import unescape
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
@@ -2153,6 +2154,14 @@ INLINE_HTML_TAG = re.compile(
     rf"</?[A-Za-z][A-Za-z0-9-]*(?:{RAW_HTML_ATTRIBUTE})*[ \t]*/?>",
     re.IGNORECASE,
 )
+INLINE_HTML_ANCHOR_TAG = re.compile(
+    rf"<a(?P<attributes>(?:{RAW_HTML_ATTRIBUTE})*)[ \t]*/?>",
+    re.IGNORECASE,
+)
+INLINE_HTML_ATTRIBUTE_TOKEN = re.compile(
+    rf"[ \t]+(?P<name>{RAW_HTML_ATTRIBUTE_NAME})"
+    rf"(?:[ \t]*=[ \t]*(?P<value>{RAW_HTML_ATTRIBUTE_VALUE}))?"
+)
 INLINE_URI_AUTOLINK = re.compile(
     r"<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20\x7f]*>"
 )
@@ -2382,6 +2391,9 @@ def _inline_syntax_ranges(
     """Parse code spans, raw HTML, and autolinks left to right."""
     ranges: list[tuple[int, int, str]] = []
     run_lengths, next_runs = _backtick_run_index(text)
+    processing_instruction_exhausted = False
+    declaration_exhausted = False
+    cdata_exhausted = False
     cursor = 0
     while cursor < len(text):
         if _is_commonmark_escape_start(text, cursor):
@@ -2400,6 +2412,41 @@ def _inline_syntax_ranges(
             continue
 
         if text[cursor] == "<":
+            special_end: int | None = None
+            if (
+                not processing_instruction_exhausted
+                and text.startswith("<?", cursor)
+            ):
+                terminator = text.find("?>", cursor + 2)
+                if terminator < 0:
+                    processing_instruction_exhausted = True
+                else:
+                    special_end = terminator + 2
+            elif (
+                not declaration_exhausted
+                and cursor + 2 < len(text)
+                and text.startswith("<!", cursor)
+                and "A" <= text[cursor + 2] <= "Z"
+            ):
+                terminator = text.find(">", cursor + 3)
+                if terminator < 0:
+                    declaration_exhausted = True
+                else:
+                    special_end = terminator + 1
+            elif (
+                not cdata_exhausted
+                and text.startswith("<![CDATA[", cursor)
+            ):
+                terminator = text.find("]]>", cursor + 9)
+                if terminator < 0:
+                    cdata_exhausted = True
+                else:
+                    special_end = terminator + 3
+            if special_end is not None:
+                ranges.append((cursor, special_end, "html"))
+                cursor = special_end
+                continue
+
             match = next(
                 (
                     candidate
@@ -2436,6 +2483,57 @@ def _inline_ignored_ranges(text: str) -> list[tuple[int, int]]:
     ]
 
 
+def _html_anchor_destination(tag: str) -> str | None:
+    """Extract the first href from one complete CommonMark HTML anchor."""
+    anchor = INLINE_HTML_ANCHOR_TAG.fullmatch(tag)
+    if anchor is None:
+        return None
+
+    attributes = anchor.group("attributes")
+    cursor = 0
+    href_seen = False
+    href: str | None = None
+    while cursor < len(attributes):
+        attribute = INLINE_HTML_ATTRIBUTE_TOKEN.match(attributes, cursor)
+        if attribute is None:
+            return None
+        cursor = attribute.end()
+        if attribute.group("name").casefold() != "href" or href_seen:
+            continue
+        href_seen = True
+        value = attribute.group("value")
+        if value is None:
+            href = ""
+        elif (
+            len(value) >= 2
+            and value[0] in {'"', "'"}
+            and value[-1] == value[0]
+        ):
+            href = value[1:-1]
+        else:
+            href = value
+    return href if href_seen else None
+
+
+def _count_visible_html_anchor_destination(
+    text: str,
+    expected: str,
+    syntax_ranges: list[tuple[int, int, str]],
+) -> int:
+    """Count canonical hrefs from complete visible raw HTML anchors."""
+    count = 0
+    for start, end, kind in syntax_ranges:
+        if kind != "html":
+            continue
+        destination = _html_anchor_destination(text[start:end])
+        if (
+            destination is not None
+            and _normalize_markdown_destination(destination) == expected
+        ):
+            count += 1
+    return count
+
+
 def _without_inline_code(text: str) -> str:
     """Remove code spans so they cannot supply normative prose contracts."""
     ranges = _inline_code_ranges(text)
@@ -2455,10 +2553,17 @@ def _count_visible_markdown_link(lines: list[str], expected: str) -> int:
     count = 0
     for line in lines:
         ignored_ranges = _inline_ignored_ranges(line)
+        ignored_range_index = 0
         position = line.find(expected)
         while position >= 0:
-            hidden = any(
-                start <= position < end for start, end in ignored_ranges
+            while (
+                ignored_range_index < len(ignored_ranges)
+                and ignored_ranges[ignored_range_index][1] <= position
+            ):
+                ignored_range_index += 1
+            hidden = (
+                ignored_range_index < len(ignored_ranges)
+                and ignored_ranges[ignored_range_index][0] <= position
             )
             escaped = _is_backslash_escaped(line, position)
             image = (
@@ -2504,8 +2609,10 @@ def _markdown_reference_key(
     return key or None
 
 
-def _markdown_destination_prefix(text: str) -> str | None:
-    """Parse one complete same-line CommonMark reference destination."""
+def _markdown_reference_destination(
+    text: str,
+) -> tuple[str, bool] | None:
+    """Parse one complete supported reference destination/title line."""
     candidate = text.lstrip(" \t")
     if not candidate:
         return None
@@ -2552,7 +2659,7 @@ def _markdown_destination_prefix(text: str) -> str | None:
     while cursor < len(candidate) and candidate[cursor] in " \t":
         cursor += 1
     if cursor == len(candidate):
-        return destination
+        return destination, False
     if cursor == title_separator:
         return None
 
@@ -2566,8 +2673,31 @@ def _markdown_destination_prefix(text: str) -> str | None:
     cursor = end + 1
     while cursor < len(candidate) and candidate[cursor] in " \t":
         cursor += 1
-    return destination if cursor == len(candidate) else None
+    return (destination, True) if cursor == len(candidate) else None
 
+
+def _markdown_destination_prefix(text: str) -> str | None:
+    """Return the destination from one complete supported reference line."""
+    parsed = _markdown_reference_destination(text)
+    return None if parsed is None else parsed[0]
+
+
+def _markdown_reference_title(text: str) -> bool:
+    """Return whether text is exactly one supported reference title."""
+    candidate = text.lstrip(" \t")
+    if not candidate:
+        return False
+    opener = candidate[0]
+    closer = {"\"": "\"", "'": "'", "(": ")"}.get(opener)
+    if closer is None:
+        return False
+    end = _find_unescaped_token(candidate, closer, 1)
+    if end < 0:
+        return False
+    cursor = end + 1
+    while cursor < len(candidate) and candidate[cursor] in " \t":
+        cursor += 1
+    return cursor == len(candidate)
 
 def _inline_markdown_destination(
     line: str,
@@ -2631,9 +2761,13 @@ def _inline_markdown_destination(
     return destination, cursor + 1
 
 
-def _markdown_label_end_map(text: str) -> dict[int, int]:
+def _markdown_label_end_map(
+    text: str,
+    ignored_ranges: list[tuple[int, int]] | None = None,
+) -> dict[int, int]:
     """Index bracket pairs, skipping higher-precedence spans, in linear time."""
-    ignored_ranges = _inline_ignored_ranges(text)
+    if ignored_ranges is None:
+        ignored_ranges = _inline_ignored_ranges(text)
     openings: list[int] = []
     closing_by_opening: dict[int, int] = {}
     range_index = 0
@@ -2665,8 +2799,9 @@ def _markdown_label_end_map(text: str) -> dict[int, int]:
 
 def _normalize_markdown_destination(destination: str) -> str:
     """Normalize browser/path-equivalent relative destinations fail closed."""
-    normalized = unquote(destination.strip()).replace("\\", "/")
+    normalized = unescape(destination).strip().replace("\\", "/")
     normalized = normalized.split("#", 1)[0].split("?", 1)[0]
+    normalized = unquote(normalized)
     while len(normalized) > 1 and normalized.endswith("/"):
         normalized = normalized[:-1]
     normalized = posixpath.normpath(normalized)
@@ -2676,7 +2811,7 @@ def _normalize_markdown_destination(destination: str) -> str:
 def _markdown_reference_definitions(
     lines: list[str],
 ) -> tuple[dict[str, str], set[int]]:
-    """Collect visible reference definitions, including list continuations."""
+    """Collect definitions, including continued destinations and titles."""
     definitions: dict[str, str] = {}
     definition_lines: set[int] = set()
     for index, line in enumerate(lines):
@@ -2685,27 +2820,35 @@ def _markdown_reference_definitions(
         if match is None:
             continue
 
-        destination = _markdown_destination_prefix(match.group("rest"))
+        rest = match.group("rest")
+        parsed = _markdown_reference_destination(rest)
         consumed_line = index
-        if destination is None and not match.group("rest").strip() and index + 1 < len(lines):
+        if parsed is None and not rest.strip() and index + 1 < len(lines):
             continuation = _strip_blockquote_prefixes(
                 _without_inline_code(lines[index + 1])
             ).lstrip()
-            destination = _markdown_destination_prefix(continuation)
-            if destination is not None:
+            parsed = _markdown_reference_destination(continuation)
+            if parsed is not None:
                 consumed_line = index + 1
 
-        if destination is None:
+        if parsed is None:
             continue
+        destination, has_title = parsed
+        if not has_title and consumed_line + 1 < len(lines):
+            title = _strip_blockquote_prefixes(
+                _without_inline_code(lines[consumed_line + 1])
+            ).lstrip()
+            if _markdown_reference_title(title):
+                consumed_line += 1
+
         raw_label = match.group("label")
         if len(raw_label) > COMMONMARK_REFERENCE_LABEL_MAX_LENGTH:
             continue
         label = _markdown_reference_label(raw_label)
         if label:
             definitions.setdefault(label, destination)
-            definition_lines.update({index, consumed_line})
+            definition_lines.update(range(index, consumed_line + 1))
     return definitions, definition_lines
-
 
 def _count_visible_markdown_destination(
     lines: list[str],
@@ -2719,8 +2862,17 @@ def _count_visible_markdown_destination(
     for line_index, line in enumerate(lines):
         if line_index in definition_lines:
             continue
-        ignored_ranges = _inline_ignored_ranges(line)
-        label_ends = _markdown_label_end_map(line)
+        syntax_ranges = _inline_syntax_ranges(line)
+        ignored_ranges = [
+            (start, end) for start, end, _kind in syntax_ranges
+        ]
+        count += _count_visible_html_anchor_destination(
+            line,
+            expected,
+            syntax_ranges,
+        )
+        label_ends = _markdown_label_end_map(line, ignored_ranges)
+        ignored_range_index = 0
         cursor = 0
         while cursor < len(line):
             start = line.find("[", cursor)
@@ -2728,6 +2880,16 @@ def _count_visible_markdown_destination(
                 break
             cursor = start + 1
             if _is_backslash_escaped(line, start):
+                continue
+            while (
+                ignored_range_index < len(ignored_ranges)
+                and ignored_ranges[ignored_range_index][1] <= start
+            ):
+                ignored_range_index += 1
+            if (
+                ignored_range_index < len(ignored_ranges)
+                and ignored_ranges[ignored_range_index][0] <= start
+            ):
                 continue
             if (
                 start > 0
@@ -2774,11 +2936,6 @@ def _count_visible_markdown_destination(
                     if resolved_image:
                         cursor = max(cursor, consumed_image)
                 continue
-            if any(
-                left <= start < right for left, right in ignored_ranges
-            ):
-                continue
-
             end = label_ends.get(start)
             if end is None:
                 continue
@@ -2809,12 +2966,10 @@ def _count_visible_markdown_destination(
                 if key is not None:
                     destination = definitions.get(key)
 
-            if (
-                destination is not None
-                and _normalize_markdown_destination(destination) == expected
-            ):
-                count += 1
-            cursor = max(cursor, consumed)
+            if destination is not None:
+                if _normalize_markdown_destination(destination) == expected:
+                    count += 1
+                cursor = max(cursor, consumed)
     return count
 
 
