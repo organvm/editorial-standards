@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 import tempfile
@@ -905,6 +906,8 @@ class EditorialContractTests(unittest.TestCase):
             "HTTPS://GITHUB.COM/other/EDITORIAL-STANDARDS.",
             "HtTpS://www.GitHub.Com/OTHER/editorial-standards.GIT.",
             "HTTPS://GITHUB.COM/other/PUBLIC-PROCESS.",
+            "//github.com/other/editorial-standards/issues/1",
+            r"HTTPS:\\GITHUB.COM\other\editorial-standards\issues\1",
         )
         for url in wrong_owner_urls:
             with self.subTest(url=url):
@@ -962,6 +965,38 @@ class EditorialContractTests(unittest.TestCase):
                 path.write_text(content, encoding="utf-8")
                 self.assert_contract_error(expected_error)
         path.write_text(original, encoding="utf-8")
+
+    def test_validates_every_value_registry_entry_contract(self) -> None:
+        path = self.fixture_root / "value-repos.json"
+        original = path.read_text(encoding="utf-8")
+        registry = json.loads(original)
+        canonical = registry["value_repos"][0]
+
+        invalid_entries = (
+            ({"x": 1}, "entry keys must be exactly"),
+            ({**canonical, "repo": 1}, "entry values must be nonempty strings"),
+            (
+                {**canonical, "repo": "other/repository", "tier": ""},
+                "entry values must be nonempty strings",
+            ),
+            (
+                {
+                    **canonical,
+                    "repo": "other/repository",
+                    "discovered": "2026-02-31",
+                },
+                "valid YYYY-MM-DD calendar date",
+            ),
+        )
+        for entry, expected_error in invalid_entries:
+            with self.subTest(entry=entry, expected_error=expected_error):
+                attacked = {**registry, "value_repos": [canonical, entry]}
+                path.write_text(
+                    json.dumps(attacked, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(expected_error)
+                path.write_text(original, encoding="utf-8")
 
     def test_pins_every_canonical_registry_entry_field(self) -> None:
         path = self.fixture_root / "value-repos.json"
@@ -3263,6 +3298,42 @@ class EditorialContractTests(unittest.TestCase):
                 self.assert_contract_error("canonical project link")
                 path.write_text(original, encoding="utf-8")
 
+    def test_counts_normalized_canonical_project_destinations(self) -> None:
+        path = self.fixture_root / "templates/audiences/general.md"
+        original = path.read_text(encoding="utf-8")
+        duplicate_routes = (
+            "[Project home](../../README.md)",
+            "[Project home](<../../README.md>)",
+            "[Project home][project-home]\n\n[project-home]: ../../README.md",
+            (
+                "- Alternate route\n"
+                "    [Project home][continued-home]\n"
+                "    [continued-home]: ../../README.md"
+            ),
+            "[Project home](../../README.md/)",
+            r"[Project home](..\..\README.md)",
+        )
+        for route in duplicate_routes:
+            with self.subTest(route=route):
+                path.write_text(original + f"\n{route}\n", encoding="utf-8")
+                self.assert_contract_error("duplicate canonical project link")
+                path.write_text(original, encoding="utf-8")
+
+    def test_ignores_nonlinks_and_hidden_canonical_destination_syntax(self) -> None:
+        path = self.fixture_root / "templates/audiences/general.md"
+        original = path.read_text(encoding="utf-8")
+        nonlinks = (
+            "[Project home][missing]\n\n[project home]: ../../README.md",
+            "[Project home]\n\n(../../README.md)",
+            '<pre>\n<a href="../../README.md">Project home</a>\n</pre>',
+            chr(96) + "[Project home]\n(../../README.md)" + chr(96),
+        )
+        for candidate in nonlinks:
+            with self.subTest(candidate=candidate):
+                path.write_text(original + f"\n{candidate}\n", encoding="utf-8")
+                self.assertEqual([], validate(self.fixture_root))
+                path.write_text(original, encoding="utf-8")
+
     def test_rejects_missing_reader_template_structure(self) -> None:
         required_markers = {
             "templates/repository-readme-v2.md": "| I am reading as… | Start here |",
@@ -3468,6 +3539,31 @@ class EditorialContractTests(unittest.TestCase):
                 )
                 self.assert_contract_error(expected_error)
                 path.write_text(original, encoding="utf-8")
+
+    def test_rejects_impossible_formatted_calendar_dates(self) -> None:
+        cases = (
+            ("templates/guide.md", 'date: "YYYY-MM-DD"', 'date: "2026-02-31"'),
+            ("templates/log.md", "date: YYYY-MM-DD", "date: 2026-99-99"),
+        )
+        for relative_path, placeholder, impossible in cases:
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(placeholder, original)
+                path.write_text(
+                    original.replace(placeholder, impossible, 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("not a valid Gregorian calendar date")
+                path.write_text(original, encoding="utf-8")
+
+        path = self.fixture_root / "templates/guide.md"
+        original = path.read_text(encoding="utf-8")
+        path.write_text(
+            original.replace('date: "YYYY-MM-DD"', 'date: "2024-02-29"', 1),
+            encoding="utf-8",
+        )
+        self.assertEqual([], validate(self.fixture_root))
 
     def test_enforces_publication_list_bounds_with_exact_seed_placeholders(
         self,

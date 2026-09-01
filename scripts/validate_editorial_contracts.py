@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 import yaml
 
@@ -158,6 +161,7 @@ CANONICAL_REGISTRY_ENTRY = {
     ),
     "discovery_doc": "DISCOVERY.md",
 }
+CANONICAL_REGISTRY_ENTRY_FIELDS = tuple(CANONICAL_REGISTRY_ENTRY)
 CANONICAL_REGISTRY_ENVELOPE = {
     "schema_version": "1.0",
     "description": (
@@ -582,8 +586,8 @@ IDENTITY_URL_TARGETS = {
     Path("value-repos.json"): {CANONICAL_REPOSITORY: CANONICAL_ORGANIZATION},
 }
 GITHUB_REPOSITORY_URL = re.compile(
-    r"https?://(?:www\.)?github\.com/"
-    r"(?P<owner>[A-Za-z0-9_.-]+)/"
+    r"(?:(?:https?:)?[\\/]{2})(?:www\.)?github\.com[\\/]+"
+    r"(?P<owner>[A-Za-z0-9_.-]+)[\\/]+"
     r"(?P<repo>[A-Za-z0-9_.-]*[A-Za-z0-9_-])",
     re.IGNORECASE,
 )
@@ -762,10 +766,13 @@ AUDIENCE_TEMPLATES = {
     if path.parent == Path("templates/audiences")
 }
 CANONICAL_ROOT_README_H1 = "# editorial-standards"
-CANONICAL_README_LINK = "[Canonical README](../../README.md)"
+CANONICAL_PROJECT_DESTINATIONS = {
+    **{path: "../../README.md" for path in AUDIENCE_TEMPLATES},
+    Path("templates/evidence.md"): "../README.md",
+}
 CANONICAL_PROJECT_LINKS = {
-    **{path: CANONICAL_README_LINK for path in AUDIENCE_TEMPLATES},
-    Path("templates/evidence.md"): "[Canonical README](../README.md)",
+    path: f"[Canonical README]({destination})"
+    for path, destination in CANONICAL_PROJECT_DESTINATIONS.items()
 }
 REQUIRED_READER_MARKERS = {
     Path("templates/repository-readme-v2.md"): (
@@ -1319,6 +1326,15 @@ def _matches_pattern(
     return compiled.search(value) is not None
 
 
+def _is_valid_calendar_date(value: str) -> bool:
+    """Return whether a YYYY-MM-DD string names a real Gregorian calendar date."""
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return False
+    return parsed.isoformat() == value
+
+
 def _validate_rule_definition(
     schema_path: Path,
     field: str,
@@ -1543,6 +1559,14 @@ def _validate_declared_type(
                     f"{path}: field {field!r} value {value!r} does not match "
                     "the schema pattern"
                 )
+        if (
+            rules.get("format") == "YYYY-MM-DD"
+            and not _is_valid_calendar_date(value)
+        ):
+            errors.append(
+                f"{path}: field {field!r} value {value!r} is not a valid "
+                "Gregorian calendar date"
+            )
     elif expected_type == "integer":
         if value in PUBLICATION_TEMPLATE_SCALAR_PLACEHOLDERS.get(field, ()):
             return
@@ -1698,6 +1722,15 @@ def _validate_schema_value(
                     f"templates/log.md: field {field!r} value {value!r} does not "
                     "match the schema pattern"
                 )
+        if (
+            rules.get("format") == "YYYY-MM-DD"
+            and not is_canonical_date_placeholder
+            and not _is_valid_calendar_date(value)
+        ):
+            errors.append(
+                f"templates/log.md: field {field!r} value {value!r} is not a "
+                "valid Gregorian calendar date"
+            )
 
     elif expected_type == "integer":
         minimum = rules.get("min")
@@ -2217,6 +2250,227 @@ def _count_visible_markdown_link(lines: list[str], expected: str) -> int:
             if not hidden and not escaped and not image:
                 count += 1
             position = line.find(expected, position + len(expected))
+    return count
+
+
+MARKDOWN_REFERENCE_DEFINITION = re.compile(
+    r"^\[(?P<label>(?:\\.|[^\[\]])+)\]:[ \t]*(?P<rest>.*)$"
+)
+
+
+def _markdown_reference_label(label: str) -> str:
+    """Normalize a CommonMark reference label for case-insensitive lookup."""
+    unescaped = re.sub(r"\\([^\w\s])", r"\1", label)
+    return re.sub(r"\s+", " ", unescaped).strip().casefold()
+
+
+def _markdown_destination_prefix(text: str) -> str | None:
+    """Extract one inline/reference destination token from the start of text."""
+    candidate = text.lstrip(" \t")
+    if not candidate:
+        return None
+    if candidate.startswith("<"):
+        end = _find_unescaped_token(candidate, ">", 1)
+        return None if end < 0 else candidate[1:end]
+
+    cursor = 0
+    depth = 0
+    while cursor < len(candidate):
+        character = candidate[cursor]
+        if character == "\\" and cursor + 1 < len(candidate):
+            cursor += 2
+            continue
+        if character in " \t":
+            break
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        cursor += 1
+    if cursor == 0 or depth:
+        return None
+    return candidate[:cursor]
+
+
+def _inline_markdown_destination(
+    line: str,
+    opening_parenthesis: int,
+) -> tuple[str, int] | None:
+    """Parse a same-line CommonMark inline-link destination and closing offset."""
+    cursor = opening_parenthesis + 1
+    while cursor < len(line) and line[cursor] in " \t":
+        cursor += 1
+
+    if cursor < len(line) and line[cursor] == "<":
+        end = _find_unescaped_token(line, ">", cursor + 1)
+        if end < 0:
+            return None
+        destination = line[cursor + 1 : end]
+        cursor = end + 1
+    else:
+        start = cursor
+        depth = 0
+        while cursor < len(line):
+            character = line[cursor]
+            if character == "\\" and cursor + 1 < len(line):
+                cursor += 2
+                continue
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                if depth == 0:
+                    return line[start:cursor], cursor + 1
+                depth -= 1
+            elif character in " \t" and depth == 0:
+                break
+            cursor += 1
+        if depth:
+            return None
+        destination = line[start:cursor]
+
+    while cursor < len(line) and line[cursor] in " \t":
+        cursor += 1
+    if cursor < len(line) and line[cursor] in {'"', "'"}:
+        quote = line[cursor]
+        end = _find_unescaped_token(line, quote, cursor + 1)
+        if end < 0:
+            return None
+        cursor = end + 1
+    elif cursor < len(line) and line[cursor] == "(":
+        end = _find_unescaped_token(line, ")", cursor + 1)
+        if end < 0:
+            return None
+        cursor = end + 1
+    while cursor < len(line) and line[cursor] in " \t":
+        cursor += 1
+    if cursor >= len(line) or line[cursor] != ")":
+        return None
+    return destination, cursor + 1
+
+
+def _find_markdown_label_end(text: str, opening_bracket: int) -> int:
+    """Find a balanced, unescaped closing bracket for one link label."""
+    depth = 0
+    cursor = opening_bracket + 1
+    while cursor < len(text):
+        character = text[cursor]
+        if character == "\\" and cursor + 1 < len(text):
+            cursor += 2
+            continue
+        if character == "[":
+            depth += 1
+        elif character == "]":
+            if depth == 0:
+                return cursor
+            depth -= 1
+        cursor += 1
+    return -1
+
+
+def _normalize_markdown_destination(destination: str) -> str:
+    """Normalize browser/path-equivalent relative destinations fail closed."""
+    normalized = unquote(destination.strip()).replace("\\", "/")
+    normalized = normalized.split("#", 1)[0].split("?", 1)[0]
+    while len(normalized) > 1 and normalized.endswith("/"):
+        normalized = normalized[:-1]
+    normalized = posixpath.normpath(normalized)
+    return "" if normalized == "." else normalized
+
+
+def _markdown_reference_definitions(
+    lines: list[str],
+) -> tuple[dict[str, str], set[int]]:
+    """Collect visible reference definitions, including list continuations."""
+    definitions: dict[str, str] = {}
+    definition_lines: set[int] = set()
+    for index, line in enumerate(lines):
+        candidate = _strip_blockquote_prefixes(_without_inline_code(line)).lstrip()
+        match = MARKDOWN_REFERENCE_DEFINITION.match(candidate)
+        if match is None:
+            continue
+
+        destination = _markdown_destination_prefix(match.group("rest"))
+        consumed_line = index
+        if destination is None and not match.group("rest").strip() and index + 1 < len(lines):
+            continuation = _strip_blockquote_prefixes(
+                _without_inline_code(lines[index + 1])
+            ).lstrip()
+            destination = _markdown_destination_prefix(continuation)
+            if destination is not None:
+                consumed_line = index + 1
+
+        if destination is None:
+            continue
+        label = _markdown_reference_label(match.group("label"))
+        if label:
+            definitions.setdefault(label, destination)
+            definition_lines.update({index, consumed_line})
+    return definitions, definition_lines
+
+
+def _count_visible_markdown_destination(
+    lines: list[str],
+    expected_destination: str,
+) -> int:
+    """Count rendered Markdown links resolving to one normalized destination."""
+    expected = _normalize_markdown_destination(expected_destination)
+    definitions, definition_lines = _markdown_reference_definitions(lines)
+    count = 0
+
+    for line_index, line in enumerate(lines):
+        if line_index in definition_lines:
+            continue
+        code_ranges = _inline_code_ranges(line)
+        html_ranges = _inline_html_tag_ranges(line)
+        cursor = 0
+        while cursor < len(line):
+            start = line.find("[", cursor)
+            if start < 0:
+                break
+            cursor = start + 1
+            if _is_backslash_escaped(line, start):
+                continue
+            if (
+                start > 0
+                and line[start - 1] == "!"
+                and not _is_backslash_escaped(line, start - 1)
+            ):
+                continue
+            if any(left <= start < right for left, right in code_ranges):
+                continue
+            if any(left <= start < right for left, right in html_ranges):
+                continue
+
+            end = _find_markdown_label_end(line, start)
+            if end < 0:
+                continue
+            label = line[start + 1 : end]
+            after = end + 1
+            destination: str | None = None
+            consumed = after
+
+            if after < len(line) and line[after] == "(":
+                parsed = _inline_markdown_destination(line, after)
+                if parsed is not None:
+                    destination, consumed = parsed
+            elif after < len(line) and line[after] == "[":
+                reference_end = _find_markdown_label_end(line, after)
+                if reference_end >= 0:
+                    reference = line[after + 1 : reference_end]
+                    key = _markdown_reference_label(reference or label)
+                    destination = definitions.get(key)
+                    consumed = reference_end + 1
+            else:
+                destination = definitions.get(_markdown_reference_label(label))
+
+            if (
+                destination is not None
+                and _normalize_markdown_destination(destination) == expected
+            ):
+                count += 1
+            cursor = max(cursor, consumed)
     return count
 
 
@@ -4081,6 +4335,45 @@ def _validate_repository_identity(root: Path, errors: list[str]) -> None:
         elif not all(isinstance(entry, dict) for entry in entries):
             errors.append(f"{registry_path}: value_repos entries must be JSON mappings")
         else:
+            expected_entry_fields = set(CANONICAL_REGISTRY_ENTRY_FIELDS)
+            seen_repositories: set[str] = set()
+            for index, entry in enumerate(entries):
+                context = f"{registry_path}: value_repos[{index}]"
+                if set(entry) != expected_entry_fields:
+                    errors.append(
+                        f"{context}: entry keys must be exactly "
+                        f"{sorted(expected_entry_fields)!r}"
+                    )
+                invalid_fields = sorted(
+                    field
+                    for field in expected_entry_fields
+                    if not isinstance(entry.get(field), str)
+                    or not entry[field].strip()
+                )
+                if invalid_fields:
+                    errors.append(
+                        f"{context}: entry values must be nonempty strings: "
+                        f"{invalid_fields}"
+                    )
+                repository = entry.get("repo")
+                if isinstance(repository, str) and repository.strip():
+                    folded_repository = repository.casefold()
+                    if folded_repository in seen_repositories:
+                        errors.append(
+                            f"{context}: duplicate repository identity {repository!r}"
+                        )
+                    seen_repositories.add(folded_repository)
+                discovered = entry.get("discovered")
+                if (
+                    isinstance(discovered, str)
+                    and discovered.strip()
+                    and not _is_valid_calendar_date(discovered)
+                ):
+                    errors.append(
+                        f"{context}: discovered must be a valid YYYY-MM-DD "
+                        "calendar date"
+                    )
+
             canonical_slug = f"{CANONICAL_ORGANIZATION}/{CANONICAL_REPOSITORY}"
             canonical_entries = [
                 entry for entry in entries if entry.get("repo") == canonical_slug
@@ -4407,12 +4700,13 @@ def validate(root: Path) -> list[str]:
             errors,
         )
         canonical_project_link = CANONICAL_PROJECT_LINKS.get(relative_path)
-        if canonical_project_link is not None:
+        canonical_destination = CANONICAL_PROJECT_DESTINATIONS.get(relative_path)
+        if canonical_project_link is not None and canonical_destination is not None:
             rendered_link = f"- {canonical_project_link}"
             canonical_line_occurrences = content_lines.count(rendered_link)
-            visible_link_occurrences = _count_visible_markdown_link(
+            visible_link_occurrences = _count_visible_markdown_destination(
                 content_lines,
-                canonical_project_link,
+                canonical_destination,
             )
         else:
             canonical_line_occurrences = 0
