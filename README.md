@@ -298,6 +298,7 @@ adversarial regressions are Python.
 ### Local Development
 
 ```bash
+set -euo pipefail
 git clone https://github.com/organvm/editorial-standards.git
 cd editorial-standards
 ```
@@ -306,6 +307,7 @@ Install the one Python dependency from the exact, hash-verified lock used by
 hosted CI:
 
 ```bash
+set -euo pipefail
 python3 -m pip install --require-hashes --only-binary=:all: -r requirements-ci.txt
 ```
 
@@ -313,6 +315,7 @@ Run the same YAML, editorial-contract, adversarial-regression, and structure
 checks used by hosted CI:
 
 ```bash
+set -euo pipefail
 python3 -c "
 import yaml, glob, sys
 errors = 0
@@ -342,6 +345,7 @@ test -f "docs/reader-mode-documentation.md" && ! test -L "docs/reader-mode-docum
 Before committing, also run the Python and whitespace static checks:
 
 ```bash
+set -euo pipefail
 python3 -m py_compile scripts/validate_editorial_contracts.py tests/test_editorial_contracts.py
 git diff --check
 ```

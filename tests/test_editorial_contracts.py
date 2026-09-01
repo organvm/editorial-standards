@@ -848,6 +848,29 @@ class EditorialContractTests(unittest.TestCase):
         )
         self.assert_contract_error("noncanonical GitHub owner")
 
+    def test_normalizes_github_urls_before_owner_validation(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        wrong_owner_urls = (
+            "HTTPS://GITHUB.COM/other/EDITORIAL-STANDARDS/issues/1",
+            "HTTPS://GITHUB.COM/other/EDITORIAL-STANDARDS.",
+            "HtTpS://www.GitHub.Com/OTHER/editorial-standards.GIT.",
+            "HTTPS://GITHUB.COM/other/PUBLIC-PROCESS.",
+        )
+        for url in wrong_owner_urls:
+            with self.subTest(url=url):
+                path.write_text(original + f"\nSee {url}\n", encoding="utf-8")
+                self.assert_contract_error("noncanonical GitHub owner")
+                path.write_text(original, encoding="utf-8")
+
+        path.write_text(
+            original
+            + "\nCase-equivalent route: "
+            + "HTTPS://GITHUB.COM/OrGaNvM/EDITORIAL-STANDARDS\n",
+            encoding="utf-8",
+        )
+        self.assertEqual([], validate(self.fixture_root))
+
     def test_requires_a_parseable_value_registry_mapping(self) -> None:
         path = self.fixture_root / "value-repos.json"
         original = path.read_text(encoding="utf-8")
@@ -919,6 +942,61 @@ class EditorialContractTests(unittest.TestCase):
                 )
                 self.assert_contract_error("canonical registry entry must match")
         path.write_text(original, encoding="utf-8")
+
+    def test_pins_the_complete_registry_envelope(self) -> None:
+        path = self.fixture_root / "value-repos.json"
+        original = path.read_text(encoding="utf-8")
+        mutations = (
+            (
+                original.replace('  "schema_version": "1.0",\n', "", 1),
+                "registry root keys must be exactly",
+            ),
+            (
+                original.replace(
+                    '  "description": "Ranked-tier',
+                    '  "removed": "Ranked-tier',
+                    1,
+                ),
+                "registry root keys must be exactly",
+            ),
+            (
+                original.replace('"schema_version": "1.0"', '"schema_version": "2.0"', 1),
+                "expected root schema_version='1.0'",
+            ),
+            (
+                original.replace('"schema_version": "1.0"', '"schema_version": 1', 1),
+                "expected root schema_version='1.0'",
+            ),
+            (
+                original.replace(
+                    '  "description": "Ranked-tier',
+                    '  "description": "Unreviewed',
+                    1,
+                ),
+                "expected root description=",
+            ),
+            (
+                original.replace(
+                    '  "description": "Ranked-tier registry of repos with discovered latent value. Build-out follows promotion into this list.",',
+                    '  "description": null,',
+                    1,
+                ),
+                "expected root description=",
+            ),
+            (
+                original.replace(
+                    '  "value_repos": [',
+                    '  "unreviewed": true,\n  "value_repos": [',
+                    1,
+                ),
+                "registry root keys must be exactly",
+            ),
+        )
+        for content, expected_error in mutations:
+            with self.subTest(expected_error=expected_error):
+                path.write_text(content, encoding="utf-8")
+                self.assert_contract_error(expected_error)
+                path.write_text(original, encoding="utf-8")
 
     def test_rejects_missing_or_unclassified_schema_files(self) -> None:
         required_schema_files = (
@@ -1015,6 +1093,55 @@ class EditorialContractTests(unittest.TestCase):
                         f"heading {heading!r} must appear exactly once"
                     )
                     path.write_text(original, encoding="utf-8")
+
+    def test_requires_the_canonical_h1_as_the_sole_document_title(self) -> None:
+        reader_path = self.fixture_root / "templates/audiences/general.md"
+        reader = reader_path.read_text(encoding="utf-8")
+        for attacked in (
+            "# Decoy title\n\n" + reader,
+            reader + "\n# Decoy title\n",
+            "Preface before the title.\n\n" + reader,
+            reader + "\nDecoy title\n===========\n",
+            reader + "\n   # Decoy title\n",
+            reader + "\n#\tDecoy title\n",
+            reader + "\n#\n",
+            reader + "\n> # Decoy title\n",
+            reader + "\n> Decoy title\n> ===========\n",
+            reader + "\n- # Decoy title\n",
+            reader + "\n- Decoy title\n  ===========\n",
+            reader + "\n1. # Decoy title\n",
+            reader + "\n<h1>Decoy title</h1>\n",
+        ):
+            with self.subTest(scope="reader"):
+                reader_path.write_text(attacked, encoding="utf-8")
+                self.assert_contract_error(
+                    "canonical level-one heading must be the sole document title"
+                )
+                reader_path.write_text(reader, encoding="utf-8")
+
+        for hidden in (
+            "\n```markdown\n# Decoy title\nDecoy\n===\n<h1>Decoy</h1>\n```\n",
+            "\n<!--\n# Decoy title\nDecoy\n===\n<h1>Decoy</h1>\n-->\n",
+            "\n    # Indented code, not a title\n",
+            "\n\\# Escaped hash, not a title\n",
+        ):
+            with self.subTest(hidden=hidden):
+                reader_path.write_text(reader + hidden, encoding="utf-8")
+                self.assertEqual([], validate(self.fixture_root))
+                reader_path.write_text(reader, encoding="utf-8")
+
+        publication_path = self.fixture_root / "templates/guide.md"
+        publication = publication_path.read_text(encoding="utf-8")
+        self.assertIn("\n# [Title]\n", publication)
+        publication_path.write_text(
+            publication.replace(
+                "\n# [Title]\n", "\n# Decoy title\n\n# [Title]\n", 1
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error(
+            "canonical level-one heading must be the sole document title"
+        )
 
     def test_ignores_fake_development_commands_inside_raw_html(self) -> None:
         path = self.fixture_root / "README.md"
@@ -1232,6 +1359,39 @@ class EditorialContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertEqual([], validate(self.fixture_root))
+
+    def test_requires_every_local_recipe_block_to_fail_fast(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        fail_fast_line = "set -euo pipefail\n"
+        positions = [
+            index
+            for index in range(len(original))
+            if original.startswith(fail_fast_line, index)
+        ]
+        self.assertEqual(4, len(positions))
+        for position in positions:
+            with self.subTest(position=position):
+                attacked = (
+                    original[:position]
+                    + original[position + len(fail_fast_line) :]
+                )
+                path.write_text(attacked, encoding="utf-8")
+                self.assert_contract_error(
+                    "Development bash recipe must match the exact canonical"
+                )
+                path.write_text(original, encoding="utf-8")
+
+        for replacement in ("set +e", "set -uo pipefail", "set -e || true"):
+            with self.subTest(replacement=replacement):
+                path.write_text(
+                    original.replace("set -euo pipefail", replacement, 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(
+                    "Development bash recipe must match the exact canonical"
+                )
+                path.write_text(original, encoding="utf-8")
 
     def test_binds_complete_multiline_yaml_command_to_hosted_ci(self) -> None:
         readme_path = self.fixture_root / "README.md"
@@ -2507,6 +2667,120 @@ class EditorialContractTests(unittest.TestCase):
         )
 
         self.assert_contract_error("outside the schema enum")
+
+    def test_restricts_format_based_placeholder_exemptions(self) -> None:
+        schema_path = self.fixture_root / "schemas/log-schema.yaml"
+        template_path = self.fixture_root / "templates/log.md"
+        schema = schema_path.read_text(encoding="utf-8")
+        template = template_path.read_text(encoding="utf-8")
+
+        template_path.write_text(
+            template.replace("date: YYYY-MM-DD", "date: NOT-A-DATE", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("does not match the schema pattern")
+
+        schema_path.write_text(
+            schema.replace(
+                '    format: "YYYY-MM-DD"\n',
+                '    format: "NOT-A-DATE"\n',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("declare unsupported format 'NOT-A-DATE'")
+
+        schema_path.write_text(
+            schema.replace('    format: "YYYY-MM-DD"\n', "", 1),
+            encoding="utf-8",
+        )
+        template_path.write_text(template, encoding="utf-8")
+        self.assert_contract_error("must retain the canonical YYYY-MM-DD")
+
+        schema_path.write_text(
+            schema.replace('    format: "YYYY-MM-DD"\n', "", 1).replace(
+                '    pattern: "^\\\\d{4}-\\\\d{2}-\\\\d{2}$"\n',
+                '    pattern: "^NOT-A-DATE$"\n',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        template_path.write_text(
+            template.replace("date: YYYY-MM-DD", "date: NOT-A-DATE", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("must retain the canonical YYYY-MM-DD")
+
+        schema_path.write_text(
+            schema.replace(
+                '    pattern: "^\\\\d{4}-\\\\d{2}-\\\\d{2}$"\n',
+                '    pattern: ""\n',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        template_path.write_text(template, encoding="utf-8")
+        self.assert_contract_error("pattern must be a nonempty string")
+
+        schema_path.write_text(
+            schema.replace(
+                '    pattern: "^\\\\d{4}-\\\\d{2}-\\\\d{2}$"\n',
+                '    pattern: "^NOT-A-DATE$"\n',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        template_path.write_text(
+            template.replace("date: YYYY-MM-DD", "date: NOT-A-DATE", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("requires canonical pattern")
+
+    def test_rejects_line_breaks_in_patterned_scalar_and_list_values(self) -> None:
+        guide_path = self.fixture_root / "templates/guide.md"
+        guide = guide_path.read_text(encoding="utf-8")
+        guide_mutations = (
+            (
+                'author: "@4444J99"',
+                'author: "@4444J99\\n"',
+                "field 'author'",
+            ),
+            (
+                "tags: [guide]",
+                'tags: [guide, "bad\\n"]',
+                "field tags[1]",
+            ),
+            (
+                "related_repos: []",
+                'related_repos: ["organvm/editorial-standards\\n"]',
+                "field related_repos[0]",
+            ),
+            (
+                'reading_time: ""',
+                'reading_time: "12 min\\n"',
+                "field 'reading_time'",
+            ),
+        )
+        for current, replacement, context in guide_mutations:
+            with self.subTest(context=context):
+                guide_path.write_text(
+                    guide.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("does not match the schema pattern")
+                guide_path.write_text(guide, encoding="utf-8")
+
+        log_path = self.fixture_root / "templates/log.md"
+        log = log_path.read_text(encoding="utf-8")
+        for current, replacement in (
+            ("date: YYYY-MM-DD", 'date: "2026-09-01\\n"'),
+            ("  - building-in-public", '  - "building-in-public\\n"'),
+        ):
+            with self.subTest(replacement=replacement):
+                log_path.write_text(
+                    log.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("does not match the schema pattern")
+                log_path.write_text(log, encoding="utf-8")
 
     def test_reports_scalar_enums_without_crashing_value_validation(self) -> None:
         mutations = (

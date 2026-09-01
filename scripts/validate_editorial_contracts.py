@@ -121,6 +121,13 @@ CANONICAL_REGISTRY_ENTRY = {
     ),
     "discovery_doc": "DISCOVERY.md",
 }
+CANONICAL_REGISTRY_ENVELOPE = {
+    "schema_version": "1.0",
+    "description": (
+        "Ranked-tier registry of repos with discovered latent value. Build-out "
+        "follows promotion into this list."
+    ),
+}
 CANONICAL_IDENTITY_LINES = {
     Path("AGENTS.md"): (
         "- **Produce** `editorial-governance` for ORGAN-V",
@@ -415,19 +422,23 @@ REQUIRED_STRUCTURE_VALIDATION_COMMAND = "\n".join(
         '"::notice::Reader-mode standard found" || exit 1',
     )
 )
+REQUIRED_LOCAL_FAIL_FAST_COMMAND = "set -euo pipefail"
 REQUIRED_LOCAL_CI_BASH_BLOCKS = (
     (
+        REQUIRED_LOCAL_FAIL_FAST_COMMAND,
         "git clone https://github.com/organvm/editorial-standards.git",
         "cd editorial-standards",
     ),
-    (REQUIRED_CI_INSTALL_COMMAND,),
-    tuple(line.strip() for line in REQUIRED_YAML_VALIDATION_COMMAND.splitlines())
+    (REQUIRED_LOCAL_FAIL_FAST_COMMAND, REQUIRED_CI_INSTALL_COMMAND),
+    (REQUIRED_LOCAL_FAIL_FAST_COMMAND,)
+    + tuple(line.strip() for line in REQUIRED_YAML_VALIDATION_COMMAND.splitlines())
     + (
         "python3 scripts/validate_editorial_contracts.py",
         "python3 -m unittest discover -s tests -v",
     )
     + tuple(line.strip() for line in REQUIRED_STRUCTURE_VALIDATION_COMMAND.splitlines()),
     (
+        REQUIRED_LOCAL_FAIL_FAST_COMMAND,
         "python3 -m py_compile scripts/validate_editorial_contracts.py "
         "tests/test_editorial_contracts.py",
         "git diff --check",
@@ -529,7 +540,9 @@ IDENTITY_URL_TARGETS = {
 }
 GITHUB_REPOSITORY_URL = re.compile(
     r"https?://(?:www\.)?github\.com/"
-    r"(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)"
+    r"(?P<owner>[A-Za-z0-9_.-]+)/"
+    r"(?P<repo>[A-Za-z0-9_.-]*[A-Za-z0-9_-])",
+    re.IGNORECASE,
 )
 FRONTMATTER_README_RULE_KEYS = {
     "layout": {"type", "enum"},
@@ -1023,6 +1036,7 @@ REQUIRED_READER_TABLE_SECTIONS = {
 TABLE_DELIMITER_CELL = re.compile(r"^:?-{3,}:?$")
 FRONTMATTER_TABLE_HEADER = ("Field", "Type", "Core constraint")
 DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
+SUPPORTED_STRING_FORMAT_PATTERNS = {"YYYY-MM-DD": DATE_PATTERN}
 TAG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
 TAG_GOVERNANCE_FORMAT = (
     "lowercase, hyphenated (e.g. 'building-in-public', not 'Building In Public')"
@@ -1190,10 +1204,16 @@ def _matches_pattern(
         errors.append(f"{context}: schema pattern must be a string")
         return None
     try:
-        return re.search(pattern, value) is not None
+        compiled = re.compile(pattern)
     except re.error as exc:
         errors.append(f"{context}: invalid schema regex pattern: {exc}")
         return None
+    # Frontmatter scalar strings are physical single-line values. Reject line
+    # breaks before matching so Python's ``$`` anchor cannot accept a trailing
+    # newline, while preserving intentional prefix rules such as ``^@``.
+    if "\n" in value or "\r" in value:
+        return False
+    return compiled.search(value) is not None
 
 
 def _validate_rule_definition(
@@ -1281,8 +1301,10 @@ def _validate_rule_definition(
         pattern = rules.get(pattern_key)
         if pattern is None:
             continue
-        if not isinstance(pattern, str):
-            errors.append(f"{context} {pattern_key} must be a string")
+        if not isinstance(pattern, str) or not pattern:
+            errors.append(
+                f"{context} {pattern_key} must be a nonempty string"
+            )
             continue
         try:
             re.compile(pattern)
@@ -1290,8 +1312,32 @@ def _validate_rule_definition(
             errors.append(f"{context} has invalid {pattern_key}: {exc}")
 
     schema_format = rules.get("format")
-    if schema_format is not None and not isinstance(schema_format, str):
-        errors.append(f"{context} format must be a string")
+    if schema_format is not None:
+        if not isinstance(schema_format, str):
+            errors.append(f"{context} format must be a string")
+        elif expected_type != "string":
+            errors.append(f"{context} format requires type 'string'")
+        elif schema_format not in SUPPORTED_STRING_FORMAT_PATTERNS:
+            errors.append(f"{context} declare unsupported format {schema_format!r}")
+        elif rules.get("pattern") != SUPPORTED_STRING_FORMAT_PATTERNS[schema_format]:
+            errors.append(
+                f"{context} format {schema_format!r} requires canonical pattern "
+                f"{SUPPORTED_STRING_FORMAT_PATTERNS[schema_format]!r}"
+            )
+
+    if (
+        schema_path
+        in {Path("schemas/frontmatter-schema.yaml"), Path("schemas/log-schema.yaml")}
+        and field == "date"
+        and (
+            schema_format != "YYYY-MM-DD"
+            or rules.get("pattern") != DATE_PATTERN
+        )
+    ):
+        errors.append(
+            f"{context} must retain the canonical YYYY-MM-DD format and "
+            f"pattern {DATE_PATTERN!r}"
+        )
 
     if expected_type == "list":
         item_type = rules.get("item_type")
@@ -1531,8 +1577,13 @@ def _validate_schema_value(
         if _is_nonnegative_integer(maximum) and len(value) > maximum:
             errors.append(f"templates/log.md: field {field!r} is longer than allowed")
         pattern = rules.get("pattern")
-        placeholder = rules.get("format")
-        if pattern and value != placeholder:
+        is_canonical_date_placeholder = (
+            field == "date"
+            and value == "YYYY-MM-DD"
+            and rules.get("format") == "YYYY-MM-DD"
+            and pattern == DATE_PATTERN
+        )
+        if pattern and not is_canonical_date_placeholder:
             matched = _matches_pattern(
                 pattern,
                 value,
@@ -1804,6 +1855,10 @@ RAW_HTML_GENERIC_START = re.compile(
     rf"<[A-Za-z][A-Za-z0-9-]*(?:{RAW_HTML_ATTRIBUTE})*[ \t]*/?>"
     rf"|</[A-Za-z][A-Za-z0-9-]*[ \t]*>"
     rf")[ \t]*$"
+)
+RAW_HTML_H1_START = re.compile(r"^[ ]{0,3}<h1(?=[\s/>])", re.IGNORECASE)
+COMMONMARK_CONTAINER_PREFIX = re.compile(
+    r"^[ ]{0,3}(?:>[ \t]?|(?:[-+*]|\d{1,9}[.)])[ \t]+)"
 )
 
 
@@ -2132,6 +2187,11 @@ def _markdown_contract_view(
             raw_html_end = closing
             continue
         if RAW_HTML_BLOCK_START.match(line) or RAW_HTML_GENERIC_START.match(line):
+            if RAW_HTML_H1_START.match(line):
+                # Raw HTML headings render as document titles even though the
+                # rest of a raw block is intentionally excluded from prose
+                # contract matching.
+                rendered.append(line)
             raw_html_until_blank = True
             continue
 
@@ -2344,6 +2404,32 @@ def _validate_required_reader_table(
             )
 
 
+def _rendered_level_one_headings(lines: list[str]) -> list[str]:
+    """Return CommonMark ATX and setext level-one headings from visible lines."""
+    normalized_lines: list[str] = []
+    for line in lines:
+        normalized = line
+        while (prefix := COMMONMARK_CONTAINER_PREFIX.match(normalized)) is not None:
+            normalized = normalized[prefix.end() :]
+        normalized_lines.append(normalized)
+
+    headings: list[str] = []
+    for index, line in enumerate(normalized_lines):
+        if re.fullmatch(r"[ ]{0,3}#(?:[ \t]+.*)?", line):
+            headings.append(line)
+        if RAW_HTML_H1_START.match(line):
+            headings.append(line)
+        if (
+            index > 0
+            and normalized_lines[index - 1].strip()
+            and re.fullmatch(r"[ ]{0,3}=+[ \t]*", line)
+        ):
+            headings.append(
+                f"{normalized_lines[index - 1].strip()}\n{line.strip()}"
+            )
+    return headings
+
+
 def _validate_reader_structure(
     path: Path,
     lines: list[str],
@@ -2351,6 +2437,17 @@ def _validate_reader_structure(
     errors: list[str],
 ) -> None:
     """Require reader markers exactly once and in their declared sequence."""
+    if markers and re.fullmatch(r"# [^#].*", markers[0]):
+        canonical_h1 = markers[0]
+        first_nonblank = next((line for line in lines if line.strip()), None)
+        rendered_h1s = _rendered_level_one_headings(lines)
+        if first_nonblank != canonical_h1 or rendered_h1s != [canonical_h1]:
+            errors.append(
+                f"{path}: canonical level-one heading must be the sole document "
+                f"title and first rendered content: expected={canonical_h1!r}, "
+                f"actual={rendered_h1s!r}"
+            )
+
     positions: list[int] = []
     complete = True
     for marker in markers:
@@ -2883,11 +2980,15 @@ def _validate_readme(
                 ".github/workflows/ci.yml: multiline YAML validation command "
                 "drifted from the canonical mapping check"
             )
+        local_yaml_prefix = (
+            f"{REQUIRED_LOCAL_FAIL_FAST_COMMAND}\n"
+            f"{REQUIRED_YAML_VALIDATION_COMMAND}"
+        )
         exact_hosted_prefixes = [
             block
             for block in bash_blocks
-            if block == REQUIRED_YAML_VALIDATION_COMMAND
-            or block.startswith(f"{REQUIRED_YAML_VALIDATION_COMMAND}\n")
+            if block == local_yaml_prefix
+            or block.startswith(f"{local_yaml_prefix}\n")
         ]
         if len(exact_hosted_prefixes) != 1:
             errors.append(
@@ -3497,6 +3598,18 @@ def _validate_repository_identity(root: Path, errors: list[str]) -> None:
     if registry is not None and not isinstance(registry, dict):
         errors.append(f"{registry_path}: registry root must be a JSON mapping")
     elif isinstance(registry, dict):
+        expected_root_keys = {*CANONICAL_REGISTRY_ENVELOPE, "value_repos"}
+        if set(registry) != expected_root_keys:
+            errors.append(
+                f"{registry_path}: registry root keys must be exactly "
+                f"{sorted(expected_root_keys)!r}"
+            )
+        for field, expected in CANONICAL_REGISTRY_ENVELOPE.items():
+            if registry.get(field) != expected:
+                errors.append(
+                    f"{registry_path}: expected root {field}={expected!r}, "
+                    f"found {registry.get(field)!r}"
+                )
         entries = registry.get("value_repos")
         if not isinstance(entries, list):
             errors.append(f"{registry_path}: value_repos must be a JSON list")
@@ -3573,11 +3686,18 @@ def _validate_repository_identity(root: Path, errors: list[str]) -> None:
         except OSError as exc:
             errors.append(f"{relative_path}: cannot audit repository URLs: {exc}")
             continue
+        normalized_targets = {
+            repository.casefold(): owner
+            for repository, owner in target_owners.items()
+        }
         for match in GITHUB_REPOSITORY_URL.finditer(content):
-            repository = match.group("repo").removesuffix(".git")
-            expected_owner = target_owners.get(repository)
+            repository = match.group("repo").casefold().removesuffix(".git")
+            expected_owner = normalized_targets.get(repository)
             actual_owner = match.group("owner")
-            if expected_owner is not None and actual_owner != expected_owner:
+            if (
+                expected_owner is not None
+                and actual_owner.casefold() != expected_owner.casefold()
+            ):
                 errors.append(
                     f"{relative_path}: noncanonical GitHub owner for "
                     f"{repository!r}: expected={expected_owner!r}, "
@@ -3815,9 +3935,6 @@ def validate(root: Path) -> list[str]:
             continue
         content = path.read_text(encoding="utf-8")
         content_lines = _rendered_markdown_lines(relative_path, content, errors)
-        rendered_content = "\n".join(content_lines)
-        if not rendered_content.lstrip().startswith("# "):
-            errors.append(f"{relative_path}: must start with a level-one heading")
         _validate_reader_structure(
             relative_path,
             content_lines,
