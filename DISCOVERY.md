@@ -7,9 +7,10 @@
 
 `editorial-standards` is not a documentation backwater — it is the only place in
 the estate where "what makes writing good" is expressed as a **machine-readable,
-versioned contract** rather than tribal habit. It already ships five YAML schemas
+versioned contract** rather than tribal habit. It already ships six YAML schemas
 (`frontmatter-schema`, `quality-rubric`, `category-taxonomy`, `tag-governance`,
-`log-schema`), six essay templates, and a calibrated 100-point quality rubric that
+`log-schema`, `reader-mode-rubric`), six publication templates, and a calibrated
+100-point quality rubric that
 the `essay-pipeline` consumes to validate, route, and publish every essay in
 `public-process`. That makes it a live upstream dependency with real, present
 value. Its *highest latent* value, though, is that the rubric and frontmatter
@@ -30,12 +31,10 @@ low-cost, and high-leverage.
 - Active consumers: `essay-pipeline` (enforces frontmatter schema), `public-process`
   (uses templates + naming conventions). Directional contract: standards define →
   pipeline enforces → public-process displays.
-- Known drift worth noting: `README.md` documents an *older* 11-field frontmatter
-  model (`document_type`, `slug`, `organs_referenced`, `abstract`, `status`) while
-  the authoritative `schemas/frontmatter-schema.yaml` defines a different field set
-  (`layout`, `category`, `excerpt`, `portfolio_relevance`, `related_repos`,
-  `reading_time`, `word_count`, `references`, …). The schema is the source of truth;
-  the README needs reconciliation.
+- The earlier README/schema drift is now repaired: the README documents the
+  authoritative 12-field contract, and CI checks every essay template and the
+  human-readable field table against `schemas/frontmatter-schema.yaml`. A reusable
+  validator remains the next step for checking completed essays across repositories.
 
 ## Single best concrete first task
 

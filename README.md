@@ -19,8 +19,8 @@ The distinction matters. In a system that produces writing at scale — meta-sys
 Concretely, this repository provides:
 
 - **A voice specification** — the tonal and rhetorical identity that all ORGAN-V writing must express.
-- **Document type definitions** — the canonical set of essay types, each with its own structural template and purpose.
-- **A frontmatter schema** — the 11 required metadata fields that every essay must declare, with types, constraints, and validation rules.
+- **Essay category definitions** — the canonical set of essay categories, each with its own structural template and purpose.
+- **A frontmatter schema** — the 12 required metadata fields that every essay must declare, with types, constraints, and validation rules.
 - **A quality rubric** — a 100-point advisory scoring system across five dimensions, used during review to surface weak spots before publication.
 - **Naming conventions** — deterministic rules for file names, series identifiers, and tag taxonomy, so that the essay-pipeline can process content without ambiguity.
 - **A review process** — the pre-publish checklist and human synthesis gate that stands between a draft and a deployed essay.
@@ -63,9 +63,9 @@ The core principles of the ORGAN-V voice:
 
 These principles are not optional stylistic preferences. They are the editorial standard. Writing that violates them is sent back for revision.
 
-## Document Types
+## Essay Categories
 
-ORGAN-V recognizes five canonical document types. Each serves a distinct purpose and carries its own structural expectations.
+ORGAN-V recognizes five canonical essay categories. Each serves a distinct purpose and carries its own structural expectations.
 
 ### Meta-System Essay
 
@@ -79,7 +79,7 @@ The flagship form. Meta-system essays explore how the eight-organ system works, 
 
 ### Case Study
 
-A detailed examination of a specific project, feature, or system component. Case studies are empirical — they describe what happened, not what should happen. They follow the arc of a problem through its resolution (or its failure to resolve).
+A detailed examination of a specific project, feature, or system component. Case studies are empirical — they describe what happened, not what should happen. They follow the arc of a problem through its resolution (or its failure to resolve). Post-mortems use the `case-study` category and apply its evidence standard to a failed or degraded outcome.
 
 **Structure:** Context (what existed before), challenge (what needed to change), approach (what was tried), outcome (what resulted), reflection (what was learned).
 
@@ -93,11 +93,11 @@ A time-bounded look back at a sprint, phase, or milestone. Retrospectives are ho
 
 **Length:** 1,500-3,000 words.
 
-### Post-Mortem
+### Guide
 
-Written after something fails. Post-mortems are blameless, specific, and action-oriented. They exist to prevent recurrence, not to assign fault.
+A prescriptive, instructional explanation of how to complete a task or apply an approach. Guides are concrete and sequential: they teach the reader what to do, identify prerequisites, and expose the trade-offs and verification steps.
 
-**Structure:** Incident summary (what broke), timeline (when things happened), root cause analysis (why it broke), impact assessment (what was affected), remediation (what was done), prevention (what will be done differently).
+**Structure:** Audience and prerequisites, core idea, step-by-step procedure, examples, trade-offs, and verification or next steps.
 
 **Length:** 1,000-3,000 words.
 
@@ -202,7 +202,7 @@ YYYY-MM-DD-slug.md
 ```
 
 - **Date prefix:** ISO 8601 date, matching the `date` frontmatter field.
-- **Slug:** Lowercase, hyphenated, 3-80 characters. Must match the `slug` frontmatter field.
+- **Slug component:** Lowercase, hyphenated, 3-80 characters. It is derived from the filename; there is no separate `slug` frontmatter field.
 - **Extension:** Always `.md`.
 
 Examples:
@@ -224,7 +224,10 @@ Series names should be descriptive and stable. Once published, a series name sho
 
 ### Tag Taxonomy
 
-Tags are drawn from a controlled vocabulary. The initial tag set includes:
+Tags must satisfy the format and count rules in
+[`schemas/tag-governance.yaml`](schemas/tag-governance.yaml). Its curated list is
+advisory: authors should prefer those tags, while deliberate new lowercase,
+hyphenated tags remain valid. Examples organized by use include:
 
 - **System tags:** `meta-system`, `orchestration`, `governance`, `architecture`, `infrastructure`
 - **Organ tags:** `organ-i`, `organ-ii`, `organ-iii`, `organ-iv`, `organ-v`, `organ-vi`, `organ-vii`, `organ-viii`
@@ -240,16 +243,19 @@ New tags can be proposed via pull request to this repository. Tags must be lower
 
 Before an essay enters review, the author must verify:
 
-1. **Frontmatter complete.** All 11 required fields present and valid.
-2. **Slug matches filename.** The `slug` field matches the filename (minus date prefix and extension).
-3. **Word count in range.** The essay meets the minimum word count for its document type.
+1. **Frontmatter complete.** All 12 required fields are present and valid: `layout`, `title`, `author`, `date`, `tags`, `category`, `excerpt`, `portfolio_relevance`, `related_repos`, `reading_time`, `word_count`, and `references`.
+2. **Filename canonical.** The filename follows `YYYY-MM-DD-slug.md`; its date prefix matches the `date` field, and its derived slug is lowercase, hyphenated, and 3–80 characters.
+3. **Word count in range.** `word_count` is at least 500 and meets the applicable category guidance; any externally computed aggregate count declares both optional policy fields.
 4. **No broken internal links.** All cross-references to other repos, essays, or system components resolve.
-5. **Abstract is plain text.** No markdown in the abstract field.
-6. **Tags from controlled vocabulary.** All tags exist in the approved tag set.
-7. **Organs referenced accurately.** The `organs_referenced` array matches the organs actually discussed in the essay.
-8. **Code samples tested.** Any code, configuration, or command-line examples have been verified.
-9. **No secrets or credentials.** The essay does not contain API keys, tokens, or sensitive information.
-10. **Spell check passed.** The essay has been checked for typos and grammatical errors.
+5. **Excerpt bounded.** `excerpt` is a one-paragraph summary between 50 and 400 characters.
+6. **Tags valid.** `tags` contains 2–8 lowercase, hyphenated values; curated tags are preferred, and any new tag is deliberate.
+7. **Repository references accurate.** `related_repos` uses canonical repository references and matches the repositories actually discussed.
+8. **Enumerations valid.** `layout` is `essay`; `category` and `portfolio_relevance` use values admitted by the schema.
+9. **Reading time valid.** `reading_time` uses the `<integer> min` format.
+10. **References explicit.** `references` is a list, including `[]` when the essay has no external citations.
+11. **Code samples tested.** Any code, configuration, or command-line examples have been verified.
+12. **No secrets or credentials.** The essay does not contain API keys, tokens, or sensitive information.
+13. **Spell check passed.** The essay has been checked for typos and grammatical errors.
 
 ### Human Synthesis Gate
 

@@ -14,8 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Seven-dimension repository documentation audit rubric
 - LOGOS Sprint: Initial repository creation
 - Voice specification for ORGAN-V discourse layer
-- Five canonical document type definitions
-- 11-field frontmatter schema with types and constraints
+- Five canonical essay category definitions
+- 12-field frontmatter schema with types and constraints
 - 100-point quality rubric across five scoring dimensions
 - Naming conventions for posts, series, and tag taxonomy
 - Review process with pre-publish checklist and human synthesis gate
@@ -27,7 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removed unconditional cross-route links from audience templates
 - Scoped CI template checks by contract and pinned external workflow actions to
   immutable revisions
-- Reconciled the README's frontmatter table with the authoritative 12-field schema
+- Reconciled all README frontmatter, category, naming, tag, and review guidance
+  with the authoritative 12-field schema, with CI regression coverage
 - Updated repository, pipeline, public-process, and contributing links after consolidation
 
 ## [0.1.0] - 2026-02-17

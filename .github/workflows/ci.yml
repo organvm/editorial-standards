@@ -48,15 +48,16 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import sys
+          import yaml
 
-          publication_templates = {
+          essay_templates = {
               Path("templates/case-study.md"),
               Path("templates/guide.md"),
-              Path("templates/log.md"),
               Path("templates/meta-system.md"),
               Path("templates/methodology.md"),
               Path("templates/retrospective.md"),
           }
+          publication_templates = essay_templates | {Path("templates/log.md")}
           reader_mode_templates = {
               Path("templates/repository-readme-v2.md"),
               Path("templates/evidence.md"),
@@ -85,6 +86,58 @@ jobs:
                   errors += 1
               else:
                   print(f"::notice file={path}::Valid publication template")
+
+          frontmatter_schema = yaml.safe_load(
+              Path("schemas/frontmatter-schema.yaml").read_text(encoding="utf-8")
+          )
+          required_fields = set(frontmatter_schema["required_fields"])
+          optional_fields = set(frontmatter_schema.get("optional_fields", {}))
+          allowed_fields = required_fields | optional_fields
+
+          for path in sorted(essay_templates):
+              content = path.read_text(encoding="utf-8")
+              parts = content.split("---", 2)
+              if len(parts) < 3:
+                  continue
+              frontmatter = yaml.safe_load(parts[1])
+              if not isinstance(frontmatter, dict):
+                  print(f"::error file={path}::Essay frontmatter is not a mapping")
+                  errors += 1
+                  continue
+              fields = set(frontmatter)
+              missing = sorted(required_fields - fields)
+              unknown = sorted(fields - allowed_fields)
+              if missing:
+                  print(f"::error file={path}::Missing required frontmatter fields: {missing}")
+                  errors += 1
+              if unknown:
+                  print(f"::error file={path}::Unknown frontmatter fields: {unknown}")
+                  errors += 1
+
+          readme = Path("README.md").read_text(encoding="utf-8")
+          deprecated_guidance = (
+              "the 11 required metadata fields",
+              "All 11 required fields",
+              "Must match the `slug` frontmatter field",
+              "No markdown in the abstract field",
+              "The `organs_referenced` array",
+          )
+          for phrase in deprecated_guidance:
+              if phrase in readme:
+                  print(f"::error file=README.md::Deprecated frontmatter guidance: {phrase}")
+                  errors += 1
+          expected_count_phrases = (
+              f"the {len(required_fields)} required metadata fields",
+              f"All {len(required_fields)} required fields",
+          )
+          for phrase in expected_count_phrases:
+              if phrase not in readme:
+                  print(f"::error file=README.md::Missing schema-derived field count: {phrase}")
+                  errors += 1
+          for field in sorted(required_fields):
+              if f"| `{field}` |" not in readme:
+                  print(f"::error file=README.md::Frontmatter table omits required field: {field}")
+                  errors += 1
 
           for path in sorted(reader_mode_templates):
               if not path.is_file():
