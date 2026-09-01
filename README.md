@@ -1,8 +1,8 @@
-[![ORGAN-V: Logos](https://img.shields.io/badge/ORGAN--V-Logos-0d47a1?style=flat-square)](https://github.com/organvm-v-logos)
-[![CI](https://github.com/organvm-v-logos/editorial-standards/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm-v-logos/editorial-standards/actions/workflows/ci.yml)
-[![Tier: Standard](https://img.shields.io/badge/tier-standard-2196f3?style=flat-square)](https://github.com/organvm-v-logos)
-
 # editorial-standards
+
+[![ORGAN-V: Logos](https://img.shields.io/badge/ORGAN--V-Logos-0d47a1?style=flat-square)](https://github.com/organvm)
+[![CI](https://github.com/organvm/editorial-standards/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm/editorial-standards/actions/workflows/ci.yml)
+[![Tier: Standard](https://img.shields.io/badge/tier-standard-2196f3?style=flat-square)](https://github.com/organvm/editorial-standards)
 
 _Voice, quality, and structure governance for the ORGAN-V discourse layer_
 
@@ -19,13 +19,31 @@ The distinction matters. In a system that produces writing at scale — meta-sys
 Concretely, this repository provides:
 
 - **A voice specification** — the tonal and rhetorical identity that all ORGAN-V writing must express.
-- **Document type definitions** — the canonical set of essay types, each with its own structural template and purpose.
-- **A frontmatter schema** — the 11 required metadata fields that every essay must declare, with types, constraints, and validation rules.
+- **Essay category definitions** — the canonical set of essay categories, each with its own structural template and purpose.
+- **A frontmatter schema** — the 12 required metadata fields that every essay must declare, with types, constraints, and validation rules.
 - **A quality rubric** — a 100-point advisory scoring system across five dimensions, used during review to surface weak spots before publication.
 - **Naming conventions** — deterministic rules for file names, series identifiers, and tag taxonomy, so that the essay-pipeline can process content without ambiguity.
 - **A review process** — the pre-publish checklist and human synthesis gate that stands between a draft and a deployed essay.
+- **A reader-mode repository contract** — one canonical project record expressed through audience-specific editions without factual drift.
 
 Everything here is consumed downstream. The essay-pipeline reads the frontmatter schema to validate incoming drafts. The public-process repository is where validated essays land. editorial-standards sits upstream of both, defining the contract they depend on.
+
+## Reader-mode repository documentation
+
+Substantial repositories should not force general, technical, humanities,
+business, and evaluator readers through the same rhetorical sequence. ORGANVM's
+[reader-mode documentation standard](docs/reader-mode-documentation.md) defines:
+
+- repository classes A–F, based on function rather than prestige;
+- a README v2 orientation layer that preserves existing long-form depth;
+- audience-edition contracts and templates;
+- the normative editorial contract and audience templates around the canonical, evidence-bounded `project-record.yml` schema;
+- a seven-dimension audit rubric for conversion planning;
+- factual CI failures versus editorial warnings.
+
+Start with the [canonical project-record example](https://github.com/organvm-iv-taxis/schema-definitions/blob/2c2b7c8b0e841a4abde82230be88524d43f9b3c2/examples/project-record-v1-example.yaml),
+[README v2 template](templates/repository-readme-v2.md), and
+[project-record schema](https://github.com/organvm-iv-taxis/schema-definitions/blob/2c2b7c8b0e841a4abde82230be88524d43f9b3c2/schemas/project-record-v1.schema.json).
 
 ## The Voice
 
@@ -45,9 +63,9 @@ The core principles of the ORGAN-V voice:
 
 These principles are not optional stylistic preferences. They are the editorial standard. Writing that violates them is sent back for revision.
 
-## Document Types
+## Essay Categories
 
-ORGAN-V recognizes five canonical document types. Each serves a distinct purpose and carries its own structural expectations.
+ORGAN-V recognizes five canonical essay categories. Each serves a distinct purpose and carries its own structural expectations.
 
 ### Meta-System Essay
 
@@ -61,7 +79,7 @@ The flagship form. Meta-system essays explore how the eight-organ system works, 
 
 ### Case Study
 
-A detailed examination of a specific project, feature, or system component. Case studies are empirical — they describe what happened, not what should happen. They follow the arc of a problem through its resolution (or its failure to resolve).
+A detailed examination of a specific project, feature, or system component. Case studies are empirical — they describe what happened, not what should happen. They follow the arc of a problem through its resolution (or its failure to resolve). Post-mortems use the `case-study` category and apply its evidence standard to a failed or degraded outcome.
 
 **Structure:** Context (what existed before), challenge (what needed to change), approach (what was tried), outcome (what resulted), reflection (what was learned).
 
@@ -75,11 +93,11 @@ A time-bounded look back at a sprint, phase, or milestone. Retrospectives are ho
 
 **Length:** 1,500-3,000 words.
 
-### Post-Mortem
+### Guide
 
-Written after something fails. Post-mortems are blameless, specific, and action-oriented. They exist to prevent recurrence, not to assign fault.
+A prescriptive, instructional explanation of how to complete a task or apply an approach. Guides are concrete and sequential: they teach the reader what to do, identify prerequisites, and expose the trade-offs and verification steps.
 
-**Structure:** Incident summary (what broke), timeline (when things happened), root cause analysis (why it broke), impact assessment (what was affected), remediation (what was done), prevention (what will be done differently).
+**Structure:** Audience and prerequisites, core idea, step-by-step procedure, examples, trade-offs, and verification or next steps.
 
 **Length:** 1,000-3,000 words.
 
@@ -93,43 +111,35 @@ An explanation of a process, framework, or approach used within the system. Meth
 
 ## Frontmatter Schema
 
-Every ORGAN-V essay must declare exactly 11 frontmatter fields. No more, no fewer. The frontmatter is the machine-readable contract that the essay-pipeline uses to validate, route, and publish content.
+The machine-readable
+[`schemas/frontmatter-schema.yaml`](schemas/frontmatter-schema.yaml) file is the
+source of truth. It currently requires 12 fields:
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `title` | string | yes | 5-120 characters. No colons in the first 40 characters. |
-| `slug` | string | yes | Lowercase, hyphenated, 3-80 characters. Must match filename. |
-| `date` | ISO 8601 date | yes | Format: `YYYY-MM-DD`. Must not be in the future. |
-| `author` | string | yes | GitHub handle, prefixed with `@`. |
-| `document_type` | enum | yes | One of: `meta-system-essay`, `case-study`, `retrospective`, `post-mortem`, `methodology-essay`. |
-| `series` | string | no | Series identifier if part of a multi-part sequence. Lowercase, hyphenated. |
-| `series_order` | integer | conditional | Required if `series` is set. 1-indexed. |
-| `tags` | array of strings | yes | 2-8 tags from the controlled vocabulary. Lowercase, hyphenated. |
-| `organs_referenced` | array of integers | yes | Roman numeral organ numbers (1-8) that the essay references. Minimum 1. |
-| `status` | enum | yes | One of: `draft`, `review`, `published`, `archived`. |
-| `abstract` | string | yes | 80-300 characters. One-sentence summary. No markdown. |
+| Field | Type | Core constraint |
+|---|---|---|
+| `layout` | string | `essay` |
+| `title` | string | 10–200 characters |
+| `author` | string | GitHub handle with `@` prefix |
+| `date` | string | `YYYY-MM-DD` |
+| `tags` | list | 2–8 lowercase, hyphenated tags |
+| `category` | enum | `meta-system`, `case-study`, `retrospective`, `guide`, or `methodology` |
+| `excerpt` | string | 50–400 characters |
+| `portfolio_relevance` | enum | `CRITICAL`, `HIGH`, or `MEDIUM` |
+| `related_repos` | list | Canonical ORGANVM `owner/repository` slugs, such as `organvm/essay-pipeline` |
+| `reading_time` | string | e.g. `12 min` |
+| `word_count` | integer | minimum 500 |
+| `references` | list | citations, or an explicit empty list |
 
-### Field Details
+It also defines 2 optional policy fields:
 
-**title** is the human-readable essay title. The colon restriction in the first 40 characters prevents ambiguity in YAML parsing and ensures clean rendering in RSS feeds and social cards.
+| Optional field | Type | Core constraint |
+|---|---|---|
+| `word_count_policy` | enum | `computed` or `external` |
+| `word_count_override_reason` | string | 20–300 characters |
 
-**slug** is the URL-safe identifier. It must match the filename (minus the date prefix and extension). For a file named `2026-02-17-editorial-governance.md`, the slug is `editorial-governance`.
-
-**date** is the publication date. Drafts use their creation date. The date must not be in the future because the essay-pipeline uses date ordering for feed generation and will reject future-dated entries.
-
-**author** is the GitHub handle of the primary author. For AI-assisted writing, the human author is listed here; AI contribution is noted in the body or acknowledgments.
-
-**document_type** maps to one of the five canonical types defined above. This field drives template selection and structural validation in the essay-pipeline.
-
-**series** and **series_order** are used together for multi-part essays. A series like `meta-system-foundations` with three parts would have `series_order` values of 1, 2, and 3. The essay-pipeline uses these to generate series navigation.
-
-**tags** must come from the controlled vocabulary defined in this repository's `tags.yaml` (to be created as the tag taxonomy grows). Tags are the primary discovery mechanism in public-process.
-
-**organs_referenced** is the cross-referencing backbone. Every essay must declare which organs it discusses. This field feeds the organ-level index pages and enables readers to explore the system by organ.
-
-**status** controls visibility. Only `published` essays appear in the public feed. `review` essays are visible to reviewers. `draft` and `archived` are not rendered.
-
-**abstract** is the single-sentence summary used in feed entries, social cards, and search results. It must be plain text (no markdown) and must fit the character constraints.
+These optional word-count policy fields support externally computed aggregate counts.
+Downstream validators and templates must change in the same pull request as this
+schema; prose descriptions never override it.
 
 ## Quality Rubric
 
@@ -141,19 +151,21 @@ The rubric has five dimensions, each worth 20 points:
 
 How easily can the reader understand the essay on first read? Clarity scores assess sentence structure, paragraph organization, jargon management, and logical flow. A 20/20 clarity score means a competent reader outside the author's specific domain can follow the argument without re-reading.
 
-- **16-20:** Clear, well-organized, minimal jargon or jargon well-defined.
+- **16-20:** Clear, well-organized, with minimal jargon or jargon well-defined.
 - **11-15:** Generally clear with occasional dense passages.
-- **6-10:** Requires significant effort to follow; restructuring needed.
-- **1-5:** Unclear; major rewrite required.
+- **6-10:** Requires significant effort to follow; restructuring is needed.
+- **1-5:** Unclear and in need of a major rewrite.
+- **0:** No comprehensible argument or usable structure.
 
 ### Accuracy (20 points)
 
 Are the claims correct? Are the technical details right? Accuracy scores assess factual correctness, proper use of terminology, and whether code samples, configuration examples, or system descriptions match the actual implementation.
 
-- **16-20:** All claims verifiable; technical details correct.
-- **11-15:** Minor inaccuracies that do not affect the argument.
-- **6-10:** Contains errors that could mislead the reader.
-- **1-5:** Fundamentally inaccurate; requires fact-checking pass.
+- **16-20:** All claims are verifiable and technical details are correct.
+- **11-15:** Minor inaccuracies do not affect the argument.
+- **6-10:** Errors could mislead the reader and require correction.
+- **1-5:** The central account is fundamentally inaccurate.
+- **0:** Claims are contradicted by the available evidence.
 
 ### Insight Density (20 points)
 
@@ -161,26 +173,29 @@ Does the essay reward the reader's time? Insight density measures the ratio of n
 
 - **16-20:** Nearly every paragraph offers something new or useful.
 - **11-15:** Strong core insights with some padding.
-- **6-10:** Insight buried under excessive context or repetition.
-- **1-5:** Little new information; could be reduced to a fraction of its length.
+- **6-10:** Useful insight is buried under context or repetition.
+- **1-5:** Little new information; the essay could be substantially shorter.
+- **0:** No material insight beyond generic or repeated statements.
 
 ### Cross-Referencing (20 points)
 
 Does the essay connect to the broader system? Cross-referencing scores assess how well the essay links to other organs, repos, essays, and system concepts. ORGAN-V writing does not exist in isolation — it exists to document a system, and that system context must be present.
 
 - **16-20:** Rich, meaningful connections to other system components.
-- **11-15:** Some cross-references; could be better integrated.
-- **6-10:** Minimal system context; reads as standalone.
-- **1-5:** No cross-references; disconnected from the system.
+- **11-15:** Relevant cross-references exist but could be integrated more deeply.
+- **6-10:** System context is present but sparse or weakly connected.
+- **1-5:** Minimal system context; the essay reads mostly as standalone.
+- **0:** No meaningful cross-references or system context.
 
 ### Portfolio Relevance (20 points)
 
 Does this essay belong in the public process? Portfolio relevance assesses whether the essay contributes to the system's public narrative. It asks: if someone is reading the public-process collection to understand this system, does this essay help? Or is it internal documentation that does not serve an external reader?
 
 - **16-20:** Essential reading for understanding the system.
-- **11-15:** Useful but not critical; adds depth.
-- **6-10:** Marginal relevance; might be better as internal documentation.
-- **1-5:** Does not belong in the public collection.
+- **11-15:** Useful but not critical; it adds meaningful depth.
+- **6-10:** Marginal public relevance; internal documentation may be a better fit.
+- **1-5:** The connection to the public collection is weak.
+- **0:** The essay does not serve the public-process collection.
 
 ### Scoring Guidelines
 
@@ -199,7 +214,7 @@ YYYY-MM-DD-slug.md
 ```
 
 - **Date prefix:** ISO 8601 date, matching the `date` frontmatter field.
-- **Slug:** Lowercase, hyphenated, 3-80 characters. Must match the `slug` frontmatter field.
+- **Slug component:** Lowercase, hyphenated, 3-80 characters. It is derived from the filename; there is no separate `slug` frontmatter field.
 - **Extension:** Always `.md`.
 
 Examples:
@@ -221,7 +236,10 @@ Series names should be descriptive and stable. Once published, a series name sho
 
 ### Tag Taxonomy
 
-Tags are drawn from a controlled vocabulary. The initial tag set includes:
+Tags must satisfy the format and count rules in
+[`schemas/tag-governance.yaml`](schemas/tag-governance.yaml). Its curated list is
+advisory: authors should prefer those tags, while deliberate new lowercase,
+hyphenated tags remain valid. Examples organized by use include:
 
 - **System tags:** `meta-system`, `orchestration`, `governance`, `architecture`, `infrastructure`
 - **Organ tags:** `organ-i`, `organ-ii`, `organ-iii`, `organ-iv`, `organ-v`, `organ-vi`, `organ-vii`, `organ-viii`
@@ -237,16 +255,19 @@ New tags can be proposed via pull request to this repository. Tags must be lower
 
 Before an essay enters review, the author must verify:
 
-1. **Frontmatter complete.** All 11 required fields present and valid.
-2. **Slug matches filename.** The `slug` field matches the filename (minus date prefix and extension).
-3. **Word count in range.** The essay meets the minimum word count for its document type.
+1. **Frontmatter complete.** All 12 required fields are present and valid: `layout`, `title`, `author`, `date`, `tags`, `category`, `excerpt`, `portfolio_relevance`, `related_repos`, `reading_time`, `word_count`, and `references`.
+2. **Filename canonical.** The filename follows `YYYY-MM-DD-slug.md`; its date prefix matches the `date` field, and its derived slug is lowercase, hyphenated, and 3–80 characters.
+3. **Word count in range.** `word_count` is at least 500 and meets the applicable category guidance; any externally computed aggregate count declares both optional policy fields.
 4. **No broken internal links.** All cross-references to other repos, essays, or system components resolve.
-5. **Abstract is plain text.** No markdown in the abstract field.
-6. **Tags from controlled vocabulary.** All tags exist in the approved tag set.
-7. **Organs referenced accurately.** The `organs_referenced` array matches the organs actually discussed in the essay.
-8. **Code samples tested.** Any code, configuration, or command-line examples have been verified.
-9. **No secrets or credentials.** The essay does not contain API keys, tokens, or sensitive information.
-10. **Spell check passed.** The essay has been checked for typos and grammatical errors.
+5. **Excerpt bounded.** `excerpt` is a one-paragraph summary between 50 and 400 characters.
+6. **Tags valid.** `tags` contains 2–8 lowercase, hyphenated values; curated tags are preferred, and any new tag is deliberate.
+7. **Repository references accurate.** `related_repos` uses canonical, case-preserving `owner/repository` slugs under `organvm`, a legacy numbered `organvm-*` organization, `meta-organvm`, or `meta-organvm-*`, and matches the repositories actually discussed.
+8. **Enumerations valid.** `layout` is `essay`; `category` and `portfolio_relevance` use values admitted by the schema.
+9. **Reading time valid.** `reading_time` uses the `<integer> min` format.
+10. **References explicit.** `references` is a list, including `[]` when the essay has no external citations.
+11. **Code samples tested.** Any code, configuration, or command-line examples have been verified.
+12. **No secrets or credentials.** The essay does not contain API keys, tokens, or sensitive information.
+13. **Spell check passed.** The essay has been checked for typos and grammatical errors.
 
 ### Human Synthesis Gate
 
@@ -266,8 +287,8 @@ editorial-standards is part of ORGAN-V (Logos / Public Process), the discourse a
 
 Within ORGAN-V, it connects to:
 
-- **[essay-pipeline](https://github.com/organvm-v-logos/essay-pipeline)** — the automated pipeline that validates, transforms, and deploys essays. essay-pipeline consumes the frontmatter schema and document type definitions from this repository to validate incoming drafts.
-- **[public-process](https://github.com/organvm-v-logos/public-process)** — the Jekyll-powered publication venue where validated essays are deployed. public-process uses the templates and naming conventions defined here.
+- **[essay-pipeline](https://github.com/organvm/essay-pipeline)** — the automated pipeline that validates, transforms, and deploys essays. essay-pipeline consumes the frontmatter schema and document type definitions from this repository to validate incoming drafts.
+- **[public-process](https://github.com/organvm/public-process)** — the publication venue where validated essays are deployed. public-process uses the templates and naming conventions defined here.
 
 The relationship is directional: editorial-standards defines the rules, essay-pipeline enforces them, and public-process displays the results. Changes to editorial standards flow downstream through the pipeline to the publication layer.
 
@@ -277,29 +298,63 @@ Beyond ORGAN-V, editorial-standards influences how documentation is written acro
 
 ### Prerequisites
 
-No build tools are required. editorial-standards is a documentation-and-schema repository. All content is Markdown and YAML.
+Python 3.12 and PyYAML are required to run the repository's validation gate.
+The governed content remains Markdown and YAML; the executable contract and its
+adversarial regressions are Python.
 
 ### Local Development
 
 ```bash
-git clone https://github.com/organvm-v-logos/editorial-standards.git
+set -euo pipefail
+git clone https://github.com/organvm/editorial-standards.git
 cd editorial-standards
 ```
 
-To validate YAML files locally:
+Install the one Python dependency from the exact, hash-verified lock used by
+hosted CI:
 
 ```bash
+set -euo pipefail
+python3 -m pip install --require-hashes --only-binary=:all: -r requirements-ci.txt
+```
+
+Run the same YAML, editorial-contract, adversarial-regression, and structure
+checks used by hosted CI:
+
+```bash
+set -euo pipefail
 python3 -c "
 import yaml, glob, sys
 errors = 0
-for f in glob.glob('**/*.yaml', recursive=True) + glob.glob('**/*.yml', recursive=True):
+for f in glob.glob('schemas/*.yaml'):
     try:
-        yaml.safe_load(open(f))
+        data = yaml.safe_load(open(f))
+        if not isinstance(data, dict):
+            print(f'::error file={f}::Not a valid YAML mapping')
+            errors += 1
+        else:
+            print(f'::notice file={f}::Valid ({len(data)} top-level keys)')
     except Exception as e:
-        print(f'ERROR: {f}: {e}')
+        print(f'::error file={f}::{e}')
         errors += 1
-sys.exit(1 if errors else 0)
+if errors:
+    sys.exit(1)
+print(f'All {len(glob.glob(\"schemas/*.yaml\"))} schema files valid')
 "
+python3 scripts/validate_editorial_contracts.py
+python3 -m unittest discover -s tests -v
+test -f "README.md" && ! test -L "README.md" && echo "::notice::README.md found" || exit 1
+test -f "LICENSE" && ! test -L "LICENSE" && test -s "LICENSE" && python3 -c "import hashlib,pathlib,sys; p=pathlib.Path('LICENSE'); sys.exit(0 if hashlib.sha256(p.read_bytes()).hexdigest() == '65bfcf3e7864ed904700d0f80159399d07faf071600c194f0c9152d653012f3d' else 1)" && echo "::notice::License file found" || exit 1
+test -f "requirements-ci.txt" && ! test -L "requirements-ci.txt" && echo "::notice::CI requirements lock found" || exit 1
+test -f "docs/reader-mode-documentation.md" && ! test -L "docs/reader-mode-documentation.md" && echo "::notice::Reader-mode standard found" || exit 1
+```
+
+Before committing, also run the Python and whitespace static checks:
+
+```bash
+set -euo pipefail
+python3 -m py_compile scripts/validate_editorial_contracts.py tests/test_editorial_contracts.py
+git diff --check
 ```
 
 ### Repository Structure
@@ -308,15 +363,31 @@ sys.exit(1 if errors else 0)
 editorial-standards/
   README.md              # This file
   LICENSE                # MIT License
+  requirements-ci.txt    # Exact hash-verified CI dependency lock
   seed.yaml              # Automation contract
   CHANGELOG.md           # Release history
   .github/
     workflows/
-      ci.yml             # Minimal CI validation
+      ci.yml             # Schema and editorial-contract validation
   docs/
+    reader-mode-documentation.md
     adr/
       001-initial-architecture.md
       002-quality-rubric-design.md
+  schemas/
+    category-taxonomy.yaml
+    frontmatter-schema.yaml
+    log-schema.yaml
+    quality-rubric.yaml
+    reader-mode-rubric.yaml
+    tag-governance.yaml
+  scripts/
+    validate_editorial_contracts.py
+  templates/
+    repository-readme-v2.md
+    audiences/
+  tests/
+    test_editorial_contracts.py
 ```
 
 ## Contributing
@@ -325,7 +396,7 @@ Contributions to editorial-standards affect the governance rules for all ORGAN-V
 
 For voice or rubric changes, include examples of how the change would affect existing published essays. For schema changes, coordinate with the essay-pipeline repository to ensure validation logic is updated in parallel.
 
-See the [ORGAN-V contributing guidelines](https://github.com/organvm-v-logos/.github/blob/main/CONTRIBUTING.md) for general contribution practices.
+See the [ORGANVM contributing guidelines](https://github.com/organvm/.github/blob/main/CONTRIBUTING.md) for general contribution practices.
 
 ## License
 

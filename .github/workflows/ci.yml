@@ -7,20 +7,23 @@ on:
     branches: [ main, master, develop ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install pyyaml
+        run: 'python3 -m pip install --require-hashes --only-binary=:all: -r requirements-ci.txt'
 
       - name: Validate YAML schemas
         run: |
@@ -43,31 +46,18 @@ jobs:
           print(f'All {len(glob.glob(\"schemas/*.yaml\"))} schema files valid')
           "
 
-      - name: Validate templates have frontmatter
-        run: |
-          python3 -c "
-          import glob, sys
-          errors = 0
-          for f in glob.glob('templates/*.md'):
-              content = open(f).read()
-              if not content.startswith('---'):
-                  print(f'::error file={f}::Missing frontmatter delimiters')
-                  errors += 1
-              parts = content.split('---', 2)
-              if len(parts) < 3:
-                  print(f'::error file={f}::Incomplete frontmatter')
-                  errors += 1
-              else:
-                  print(f'::notice file={f}::Valid template')
-          if errors:
-              sys.exit(1)
-          print(f'All {len(glob.glob(\"templates/*.md\"))} templates valid')
-          "
+      - name: Validate editorial contracts
+        run: python3 scripts/validate_editorial_contracts.py
+
+      - name: Run adversarial contract regressions
+        run: python3 -m unittest discover -s tests -v
 
       - name: Validate structure
         run: |
-          test -f "README.md" && echo "::notice::README.md found" || echo "::warning::No README.md found"
-          test -f "LICENSE" && echo "::notice::License file found" || echo "::warning::No license file found"
+          test -f "README.md" && ! test -L "README.md" && echo "::notice::README.md found" || exit 1
+          test -f "LICENSE" && ! test -L "LICENSE" && test -s "LICENSE" && python3 -c "import hashlib,pathlib,sys; p=pathlib.Path('LICENSE'); sys.exit(0 if hashlib.sha256(p.read_bytes()).hexdigest() == '65bfcf3e7864ed904700d0f80159399d07faf071600c194f0c9152d653012f3d' else 1)" && echo "::notice::License file found" || exit 1
+          test -f "requirements-ci.txt" && ! test -L "requirements-ci.txt" && echo "::notice::CI requirements lock found" || exit 1
+          test -f "docs/reader-mode-documentation.md" && ! test -L "docs/reader-mode-documentation.md" && echo "::notice::Reader-mode standard found" || exit 1
 
       - name: Success
         run: echo "::notice::Editorial Standards CI passed"
