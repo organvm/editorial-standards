@@ -1,6 +1,6 @@
 [![ORGAN-V: Logos](https://img.shields.io/badge/ORGAN--V-Logos-0d47a1?style=flat-square)](https://github.com/organvm-v-logos)
-[![CI](https://github.com/organvm-v-logos/editorial-standards/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm-v-logos/editorial-standards/actions/workflows/ci.yml)
-[![Tier: Standard](https://img.shields.io/badge/tier-standard-2196f3?style=flat-square)](https://github.com/organvm-v-logos)
+[![CI](https://github.com/organvm/editorial-standards/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm/editorial-standards/actions/workflows/ci.yml)
+[![Tier: Standard](https://img.shields.io/badge/tier-standard-2196f3?style=flat-square)](https://github.com/organvm/editorial-standards)
 
 # editorial-standards
 
@@ -24,8 +24,26 @@ Concretely, this repository provides:
 - **A quality rubric** — a 100-point advisory scoring system across five dimensions, used during review to surface weak spots before publication.
 - **Naming conventions** — deterministic rules for file names, series identifiers, and tag taxonomy, so that the essay-pipeline can process content without ambiguity.
 - **A review process** — the pre-publish checklist and human synthesis gate that stands between a draft and a deployed essay.
+- **A reader-mode repository contract** — one canonical project record expressed through audience-specific editions without factual drift.
 
 Everything here is consumed downstream. The essay-pipeline reads the frontmatter schema to validate incoming drafts. The public-process repository is where validated essays land. editorial-standards sits upstream of both, defining the contract they depend on.
+
+## Reader-mode repository documentation
+
+Substantial repositories should not force general, technical, humanities,
+business, and evaluator readers through the same rhetorical sequence. ORGANVM's
+[reader-mode documentation standard](docs/reader-mode-documentation.md) defines:
+
+- repository classes A–F, based on function rather than prestige;
+- a README v2 orientation layer that preserves existing long-form depth;
+- audience-edition contracts and templates;
+- the normative editorial contract and audience templates around the canonical, evidence-bounded `project-record.yml` schema;
+- a seven-dimension audit rubric for conversion planning;
+- factual CI failures versus editorial warnings.
+
+Start with the [canonical project-record example](https://github.com/organvm-iv-taxis/schema-definitions/blob/main/examples/project-record-v1-example.yaml),
+[README v2 template](templates/repository-readme-v2.md), and
+[project-record schema](https://github.com/organvm-iv-taxis/schema-definitions/blob/main/schemas/project-record-v1.schema.json).
 
 ## The Voice
 
@@ -93,43 +111,28 @@ An explanation of a process, framework, or approach used within the system. Meth
 
 ## Frontmatter Schema
 
-Every ORGAN-V essay must declare exactly 11 frontmatter fields. No more, no fewer. The frontmatter is the machine-readable contract that the essay-pipeline uses to validate, route, and publish content.
+The machine-readable
+[`schemas/frontmatter-schema.yaml`](schemas/frontmatter-schema.yaml) file is the
+source of truth. It currently requires 12 fields:
 
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `title` | string | yes | 5-120 characters. No colons in the first 40 characters. |
-| `slug` | string | yes | Lowercase, hyphenated, 3-80 characters. Must match filename. |
-| `date` | ISO 8601 date | yes | Format: `YYYY-MM-DD`. Must not be in the future. |
-| `author` | string | yes | GitHub handle, prefixed with `@`. |
-| `document_type` | enum | yes | One of: `meta-system-essay`, `case-study`, `retrospective`, `post-mortem`, `methodology-essay`. |
-| `series` | string | no | Series identifier if part of a multi-part sequence. Lowercase, hyphenated. |
-| `series_order` | integer | conditional | Required if `series` is set. 1-indexed. |
-| `tags` | array of strings | yes | 2-8 tags from the controlled vocabulary. Lowercase, hyphenated. |
-| `organs_referenced` | array of integers | yes | Roman numeral organ numbers (1-8) that the essay references. Minimum 1. |
-| `status` | enum | yes | One of: `draft`, `review`, `published`, `archived`. |
-| `abstract` | string | yes | 80-300 characters. One-sentence summary. No markdown. |
+| Field | Type | Core constraint |
+|---|---|---|
+| `layout` | string | `essay` |
+| `title` | string | 10–200 characters |
+| `author` | string | GitHub handle with `@` prefix |
+| `date` | string | `YYYY-MM-DD` |
+| `tags` | list | 2–8 lowercase, hyphenated tags |
+| `category` | enum | `meta-system`, `case-study`, `retrospective`, `guide`, or `methodology` |
+| `excerpt` | string | 50–400 characters |
+| `portfolio_relevance` | enum | `CRITICAL`, `HIGH`, or `MEDIUM` |
+| `related_repos` | list | GitHub `org/repo` references |
+| `reading_time` | string | e.g. `12 min` |
+| `word_count` | integer | minimum 500 |
+| `references` | list | citations, or an explicit empty list |
 
-### Field Details
-
-**title** is the human-readable essay title. The colon restriction in the first 40 characters prevents ambiguity in YAML parsing and ensures clean rendering in RSS feeds and social cards.
-
-**slug** is the URL-safe identifier. It must match the filename (minus the date prefix and extension). For a file named `2026-02-17-editorial-governance.md`, the slug is `editorial-governance`.
-
-**date** is the publication date. Drafts use their creation date. The date must not be in the future because the essay-pipeline uses date ordering for feed generation and will reject future-dated entries.
-
-**author** is the GitHub handle of the primary author. For AI-assisted writing, the human author is listed here; AI contribution is noted in the body or acknowledgments.
-
-**document_type** maps to one of the five canonical types defined above. This field drives template selection and structural validation in the essay-pipeline.
-
-**series** and **series_order** are used together for multi-part essays. A series like `meta-system-foundations` with three parts would have `series_order` values of 1, 2, and 3. The essay-pipeline uses these to generate series navigation.
-
-**tags** must come from the controlled vocabulary defined in this repository's `tags.yaml` (to be created as the tag taxonomy grows). Tags are the primary discovery mechanism in public-process.
-
-**organs_referenced** is the cross-referencing backbone. Every essay must declare which organs it discusses. This field feeds the organ-level index pages and enables readers to explore the system by organ.
-
-**status** controls visibility. Only `published` essays appear in the public feed. `review` essays are visible to reviewers. `draft` and `archived` are not rendered.
-
-**abstract** is the single-sentence summary used in feed entries, social cards, and search results. It must be plain text (no markdown) and must fit the character constraints.
+Optional word-count policy fields support externally computed aggregate counts.
+Downstream validators and templates must change in the same pull request as this
+schema; prose descriptions never override it.
 
 ## Quality Rubric
 
@@ -266,8 +269,8 @@ editorial-standards is part of ORGAN-V (Logos / Public Process), the discourse a
 
 Within ORGAN-V, it connects to:
 
-- **[essay-pipeline](https://github.com/organvm-v-logos/essay-pipeline)** — the automated pipeline that validates, transforms, and deploys essays. essay-pipeline consumes the frontmatter schema and document type definitions from this repository to validate incoming drafts.
-- **[public-process](https://github.com/organvm-v-logos/public-process)** — the Jekyll-powered publication venue where validated essays are deployed. public-process uses the templates and naming conventions defined here.
+- **[essay-pipeline](https://github.com/organvm/essay-pipeline)** — the automated pipeline that validates, transforms, and deploys essays. essay-pipeline consumes the frontmatter schema and document type definitions from this repository to validate incoming drafts.
+- **[public-process](https://github.com/organvm-vi-koinonia/public-process)** — the publication venue where validated essays are deployed. public-process uses the templates and naming conventions defined here.
 
 The relationship is directional: editorial-standards defines the rules, essay-pipeline enforces them, and public-process displays the results. Changes to editorial standards flow downstream through the pipeline to the publication layer.
 
@@ -282,7 +285,7 @@ No build tools are required. editorial-standards is a documentation-and-schema r
 ### Local Development
 
 ```bash
-git clone https://github.com/organvm-v-logos/editorial-standards.git
+git clone https://github.com/organvm/editorial-standards.git
 cd editorial-standards
 ```
 
@@ -314,9 +317,15 @@ editorial-standards/
     workflows/
       ci.yml             # Minimal CI validation
   docs/
+    reader-mode-documentation.md
     adr/
       001-initial-architecture.md
       002-quality-rubric-design.md
+  schemas/
+    reader-mode-rubric.yaml
+  templates/
+    repository-readme-v2.md
+    audiences/
 ```
 
 ## Contributing
@@ -325,7 +334,7 @@ Contributions to editorial-standards affect the governance rules for all ORGAN-V
 
 For voice or rubric changes, include examples of how the change would affect existing published essays. For schema changes, coordinate with the essay-pipeline repository to ensure validation logic is updated in parallel.
 
-See the [ORGAN-V contributing guidelines](https://github.com/organvm-v-logos/.github/blob/main/CONTRIBUTING.md) for general contribution practices.
+See the [ORGANVM contributing guidelines](https://github.com/organvm/.github/blob/main/CONTRIBUTING.md) for general contribution practices.
 
 ## License
 

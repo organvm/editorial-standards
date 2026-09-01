@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -43,31 +43,74 @@ jobs:
           print(f'All {len(glob.glob(\"schemas/*.yaml\"))} schema files valid')
           "
 
-      - name: Validate templates have frontmatter
+      - name: Validate template contracts
         run: |
-          python3 -c "
-          import glob, sys
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+
+          publication_templates = {
+              Path("templates/case-study.md"),
+              Path("templates/guide.md"),
+              Path("templates/log.md"),
+              Path("templates/meta-system.md"),
+              Path("templates/methodology.md"),
+              Path("templates/retrospective.md"),
+          }
+          reader_mode_templates = {
+              Path("templates/repository-readme-v2.md"),
+              Path("templates/evidence.md"),
+              Path("templates/audiences/business.md"),
+              Path("templates/audiences/evaluator.md"),
+              Path("templates/audiences/general.md"),
+              Path("templates/audiences/humanities.md"),
+              Path("templates/audiences/technical.md"),
+          }
+
           errors = 0
-          for f in glob.glob('templates/*.md'):
-              content = open(f).read()
-              if not content.startswith('---'):
-                  print(f'::error file={f}::Missing frontmatter delimiters')
+          overlap = publication_templates & reader_mode_templates
+          if overlap:
+              print(f"::error::Template contracts overlap: {sorted(map(str, overlap))}")
+              errors += 1
+
+          for path in sorted(publication_templates):
+              if not path.is_file():
+                  print(f"::error file={path}::Required publication template missing")
                   errors += 1
-              parts = content.split('---', 2)
-              if len(parts) < 3:
-                  print(f'::error file={f}::Incomplete frontmatter')
+                  continue
+              content = path.read_text(encoding="utf-8")
+              parts = content.split("---", 2)
+              if not content.startswith("---") or len(parts) < 3:
+                  print(f"::error file={path}::Missing or incomplete essay frontmatter")
                   errors += 1
               else:
-                  print(f'::notice file={f}::Valid template')
+                  print(f"::notice file={path}::Valid publication template")
+
+          for path in sorted(reader_mode_templates):
+              if not path.is_file():
+                  print(f"::error file={path}::Required reader-mode template missing")
+                  errors += 1
+                  continue
+              content = path.read_text(encoding="utf-8")
+              if not content.lstrip().startswith("# "):
+                  print(f"::error file={path}::Reader-mode template must start with a level-one heading")
+                  errors += 1
+              else:
+                  print(f"::notice file={path}::Valid reader-mode template")
+
           if errors:
               sys.exit(1)
-          print(f'All {len(glob.glob(\"templates/*.md\"))} templates valid')
-          "
+          print(
+              f"Validated {len(publication_templates)} publication templates and "
+              f"{len(reader_mode_templates)} reader-mode templates"
+          )
+          PY
 
       - name: Validate structure
         run: |
           test -f "README.md" && echo "::notice::README.md found" || echo "::warning::No README.md found"
           test -f "LICENSE" && echo "::notice::License file found" || echo "::warning::No license file found"
+          test -f "docs/reader-mode-documentation.md" && echo "::notice::Reader-mode standard found" || exit 1
 
       - name: Success
         run: echo "::notice::Editorial Standards CI passed"

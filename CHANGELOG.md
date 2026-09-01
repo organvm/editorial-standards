@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Reader-mode repository documentation standard with A–F repository classes
+- Normative project-record contract linked to the canonical schema package
+- README v2, five audience-edition, and evidence-record templates
+- Seven-dimension repository documentation audit rubric
 - LOGOS Sprint: Initial repository creation
 - Voice specification for ORGAN-V discourse layer
 - Five canonical document type definitions
@@ -17,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Review process with pre-publish checklist and human synthesis gate
 - ADR-001: Initial architecture decisions
 - ADR-002: Quality rubric design rationale
+
+### Fixed
+- Separated structured claim posture from assertion verification state and
+  removed unconditional cross-route links from audience templates
+- Scoped CI template checks by contract and pinned external workflow actions to
+  immutable revisions
+- Reconciled the README's frontmatter table with the authoritative 12-field schema
+- Updated repository, pipeline, public-process, and contributing links after consolidation
 
 ## [0.1.0] - 2026-02-17
 
