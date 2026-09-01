@@ -27,6 +27,10 @@ CANONICAL_IDENTITY_LINES = {
     Path("GEMINI.md"): (
         "**Org:** `organvm` | **Repo:** `editorial-standards`",
     ),
+    Path("ecosystem.yaml"): (
+        "repo: editorial-standards",
+        "organ: V",
+    ),
     Path("README.md"): (
         "[![ORGAN-V: Logos](https://img.shields.io/badge/ORGAN--V-Logos-0d47a1?style=flat-square)](https://github.com/organvm)",
         "[![CI](https://github.com/organvm/editorial-standards/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm/editorial-standards/actions/workflows/ci.yml)",
@@ -52,6 +56,7 @@ IDENTITY_LINE_PREFIXES = {
     Path("CLAUDE.md"): ("**Org:**",),
     Path("DISCOVERY.md"): ("# Discovery:",),
     Path("GEMINI.md"): ("**Org:**",),
+    Path("ecosystem.yaml"): ("repo:", "organ:"),
     Path("README.md"): (
         "[![ORGAN-V: Logos]",
         "[![CI]",
@@ -75,14 +80,61 @@ REQUIRED_SCHEMA_FILES = {
 REQUIRED_LOCAL_CI_PREREQUISITES = ("Python 3.12", "PyYAML")
 REQUIRED_LOCAL_CI_COMMANDS = (
     "python3 -m pip install pyyaml",
-    "glob.glob('schemas/*.yaml')",
+    'python3 -c "',
+    "for f in glob.glob('schemas/*.yaml'):",
     "python3 scripts/validate_editorial_contracts.py",
     "python3 -m unittest discover -s tests -v",
     "test -f README.md",
     "test -f LICENSE",
     "test -f docs/reader-mode-documentation.md",
     "python3 -m py_compile scripts/validate_editorial_contracts.py tests/test_editorial_contracts.py",
+    "git diff --check",
 )
+CANONICAL_MAPPING_IDENTITIES = {
+    Path("seed.yaml"): {
+        "org": CANONICAL_ORGANIZATION,
+        "repo": CANONICAL_REPOSITORY,
+    },
+    Path("ecosystem.yaml"): {
+        "repo": CANONICAL_REPOSITORY,
+        "organ": "V",
+    },
+}
+IDENTITY_URL_TARGETS = {
+    Path("CHANGELOG.md"): {CANONICAL_REPOSITORY: CANONICAL_ORGANIZATION},
+    Path("CLAUDE.md"): {CANONICAL_REPOSITORY: CANONICAL_ORGANIZATION},
+    Path("DISCOVERY.md"): {CANONICAL_REPOSITORY: CANONICAL_ORGANIZATION},
+    Path("GEMINI.md"): {CANONICAL_REPOSITORY: CANONICAL_ORGANIZATION},
+    Path("README.md"): {
+        CANONICAL_REPOSITORY: CANONICAL_ORGANIZATION,
+        "public-process": CANONICAL_ORGANIZATION,
+    },
+    Path("ecosystem.yaml"): {CANONICAL_REPOSITORY: CANONICAL_ORGANIZATION},
+    Path("schemas/frontmatter-schema.yaml"): {
+        "public-process": CANONICAL_ORGANIZATION,
+    },
+    Path("schemas/log-schema.yaml"): {"public-process": CANONICAL_ORGANIZATION},
+    Path("seed.yaml"): {CANONICAL_REPOSITORY: CANONICAL_ORGANIZATION},
+    Path("value-repos.json"): {CANONICAL_REPOSITORY: CANONICAL_ORGANIZATION},
+}
+GITHUB_REPOSITORY_URL = re.compile(
+    r"https?://(?:www\.)?github\.com/"
+    r"(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)"
+)
+FRONTMATTER_README_RULE_KEYS = {
+    "layout": {"type", "enum"},
+    "title": {"type", "min_length", "max_length"},
+    "author": {"type", "pattern"},
+    "date": {"type", "format", "pattern"},
+    "tags": {"type", "min_items", "max_items", "item_type", "item_pattern"},
+    "category": {"type", "enum"},
+    "excerpt": {"type", "min_length", "max_length"},
+    "portfolio_relevance": {"type", "enum"},
+    "related_repos": {"type", "item_type", "item_pattern"},
+    "reading_time": {"type", "pattern"},
+    "word_count": {"type", "min"},
+    "references": {"type", "min_items", "item_type"},
+}
 ESSAY_CATEGORIES = {
     Path("templates/case-study.md"): "case-study",
     Path("templates/guide.md"): "guide",
@@ -217,10 +269,39 @@ REQUIRED_READER_TABLE_ROW_LABELS = {
         "**Known limitations**",
     ),
 }
+REQUIRED_READER_TABLE_SECTIONS = {
+    (
+        Path("templates/repository-readme-v2.md"),
+        ("I am reading as…", "Start here"),
+    ): "## Choose your reading path",
+    (
+        Path("templates/repository-readme-v2.md"),
+        ("", ""),
+    ): "## Project at a glance",
+    (
+        Path("templates/evidence.md"),
+        (
+            "ID",
+            "Claim",
+            "Claim posture",
+            "Assertion class",
+            "Verification state",
+            "Evidence",
+            "Freshness",
+        ),
+    ): "## Assertion evidence",
+    (
+        Path("templates/evidence.md"),
+        ("ID", "Limitation", "Related assertion"),
+    ): "## Project limitations",
+}
 TABLE_DELIMITER_CELL = re.compile(r"^:?-{3,}:?$")
 FRONTMATTER_TABLE_HEADER = ("Field", "Type", "Core constraint")
 DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
 TAG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
+TAG_GOVERNANCE_FORMAT = (
+    "lowercase, hyphenated (e.g. 'building-in-public', not 'Building In Public')"
+)
 READING_TIME_PATTERN = r"^\d+ min$"
 RELATED_REPOSITORY_PATTERN = (
     r"^(?:organvm|organvm-(?:i|ii|iii|iv|v|vi|vii|viii)-[a-z0-9]+"
@@ -271,6 +352,23 @@ def _matches_type(value: Any, expected: str) -> bool:
     return False
 
 
+def _matches_pattern(
+    pattern: Any,
+    value: str,
+    context: str,
+    errors: list[str],
+) -> bool | None:
+    """Return a regex match while turning malformed schema regexes into diagnostics."""
+    if not isinstance(pattern, str):
+        errors.append(f"{context}: schema pattern must be a string")
+        return None
+    try:
+        return re.fullmatch(pattern, value) is not None
+    except re.error as exc:
+        errors.append(f"{context}: invalid schema regex pattern: {exc}")
+        return None
+
+
 def _validate_declared_type(
     value: Any,
     rules: dict[str, Any],
@@ -286,11 +384,24 @@ def _validate_declared_type(
 
     if expected_type == "list":
         item_type = rules.get("item_type")
+        item_pattern = rules.get("item_pattern")
         for index, item in enumerate(value):
             if item_type and not _matches_type(item, item_type):
                 errors.append(
                     f"{path}: field {field}[{index}] must have type {item_type!r}"
                 )
+            elif item_pattern:
+                matched = _matches_pattern(
+                    item_pattern,
+                    item,
+                    f"{path}: field {field}[{index}]",
+                    errors,
+                )
+                if matched is False:
+                    errors.append(
+                        f"{path}: field {field}[{index}] does not match "
+                        "the schema pattern"
+                    )
     elif expected_type == "object":
         properties = rules.get("properties", {})
         if isinstance(properties, dict):
@@ -327,11 +438,18 @@ def _validate_schema_value(
             )
         pattern = rules.get("pattern")
         placeholder = rules.get("format")
-        if pattern and value != placeholder and re.fullmatch(pattern, value) is None:
-            errors.append(
-                f"templates/log.md: field {field!r} value {value!r} does not "
-                "match the schema pattern"
+        if pattern and value != placeholder:
+            matched = _matches_pattern(
+                pattern,
+                value,
+                f"templates/log.md: field {field!r}",
+                errors,
             )
+            if matched is False:
+                errors.append(
+                    f"templates/log.md: field {field!r} value {value!r} does not "
+                    "match the schema pattern"
+                )
 
     elif expected_type == "integer":
         if "min" in rules and value < rules["min"]:
@@ -351,11 +469,18 @@ def _validate_schema_value(
                     f"templates/log.md: field {item_field!r} must have type "
                     f"{item_type!r}"
                 )
-            elif item_pattern and re.fullmatch(item_pattern, item) is None:
-                errors.append(
-                    f"templates/log.md: field {item_field!r} does not match "
-                    "the schema pattern"
+            elif item_pattern:
+                matched = _matches_pattern(
+                    item_pattern,
+                    item,
+                    f"templates/log.md: field {item_field!r}",
+                    errors,
                 )
+                if matched is False:
+                    errors.append(
+                        f"templates/log.md: field {item_field!r} does not match "
+                        "the schema pattern"
+                    )
 
     elif expected_type == "object":
         properties = rules.get("properties", {})
@@ -411,6 +536,40 @@ def _table_cells(line: str) -> list[str] | None:
     if not stripped.startswith("|") or not stripped.endswith("|"):
         return None
     return [cell.strip() for cell in stripped[1:-1].split("|")]
+
+
+def _rendered_markdown_lines(
+    path: Path, content: str, errors: list[str]
+) -> list[str]:
+    """Remove fenced code so literals cannot satisfy rendered-page contracts."""
+    rendered: list[str] = []
+    fence_character: str | None = None
+    fence_length = 0
+    for line in content.splitlines():
+        stripped = line.lstrip()
+        if len(line) - len(stripped) > 3:
+            if fence_character is None:
+                rendered.append(line)
+            continue
+        fence = re.match(r"(`{3,}|~{3,})", stripped)
+        if fence_character is None:
+            if fence is None:
+                rendered.append(line)
+            else:
+                fence_character = fence.group(1)[0]
+                fence_length = len(fence.group(1))
+            continue
+        if (
+            fence is not None
+            and fence.group(1)[0] == fence_character
+            and len(fence.group(1)) >= fence_length
+            and not stripped[len(fence.group(1)) :].strip()
+        ):
+            fence_character = None
+            fence_length = 0
+    if fence_character is not None:
+        errors.append(f"{path}: unclosed Markdown code fence")
+    return rendered
 
 
 def _format_enum(values: Any) -> str:
@@ -498,6 +657,26 @@ def _validate_required_reader_table(
         return
 
     header_index = matching_headers[0]
+    owning_section = REQUIRED_READER_TABLE_SECTIONS.get((path, header))
+    if owning_section is not None:
+        section_indices = [
+            index for index, line in enumerate(lines) if line == owning_section
+        ]
+        if len(section_indices) == 1:
+            section_index = section_indices[0]
+            next_section_index = next(
+                (
+                    index
+                    for index in range(section_index + 1, len(lines))
+                    if lines[index].startswith("## ")
+                ),
+                len(lines),
+            )
+            if not section_index < header_index < next_section_index:
+                errors.append(
+                    f"{path}: required table {label!r} must remain within "
+                    f"section {owning_section!r}"
+                )
     if header_index + 1 >= len(lines):
         errors.append(f"{path}: required table {label!r} is missing its delimiter")
         return
@@ -584,9 +763,15 @@ def _validate_readme(
         if len(development_parts) == 2
         else ""
     )
-    bash_blocks = "\n".join(
-        re.findall(r"```bash\s*\n(.*?)\n```", development_section, re.DOTALL)
+    bash_blocks = re.findall(
+        r"```bash\s*\n(.*?)\n```", development_section, re.DOTALL
     )
+    executable_bash_lines = {
+        line.strip()
+        for block in bash_blocks
+        for line in block.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
     for prerequisite in REQUIRED_LOCAL_CI_PREREQUISITES:
         if prerequisite not in development_section:
             errors.append(
@@ -594,7 +779,7 @@ def _validate_readme(
                 f"{prerequisite}"
             )
     for command in REQUIRED_LOCAL_CI_COMMANDS:
-        if command not in bash_blocks:
+        if command not in executable_bash_lines:
             errors.append(
                 f"README.md: missing local CI reproduction command: {command}"
             )
@@ -703,12 +888,28 @@ def _validate_readme(
             "README.md: frontmatter table/schema field order mismatch: "
             f"expected={expected_order}, actual={table_fields}"
         )
+    renderer_fields = set(FRONTMATTER_README_RULE_KEYS)
+    if renderer_fields != required_fields:
+        errors.append(
+            "README.md: frontmatter renderer/schema field mismatch: "
+            f"missing={sorted(required_fields - renderer_fields)}, "
+            f"extra={sorted(renderer_fields - required_fields)}"
+        )
     for field in sorted(required_fields & table_field_set):
         rules = required_map.get(field)
         if not isinstance(rules, dict):
             errors.append(
                 f"schemas/frontmatter-schema.yaml: rules for {field!r} "
                 "are not a mapping"
+            )
+            continue
+        actual_rule_keys = set(rules) - {"description"}
+        expected_rule_keys = FRONTMATTER_README_RULE_KEYS.get(field, set())
+        if actual_rule_keys != expected_rule_keys:
+            errors.append(
+                "README.md: frontmatter table renderer does not cover schema "
+                f"rules for {field!r}: expected={sorted(expected_rule_keys)}, "
+                f"actual={sorted(actual_rule_keys)}"
             )
             continue
         expected_cells = _expected_frontmatter_readme_cells(field, rules)
@@ -736,24 +937,82 @@ def _validate_schema_inventory(root: Path, errors: list[str]) -> None:
         )
     for relative_path in sorted(REQUIRED_SCHEMA_FILES & discovered):
         schema = _load_yaml(root / relative_path, errors)
-        if schema is not None and not isinstance(schema, dict):
+        if not isinstance(schema, dict):
             errors.append(f"{relative_path}: schema must be a YAML mapping")
+
+
+def _validate_tag_governance(
+    root: Path, frontmatter_tag_rules: Any, errors: list[str]
+) -> None:
+    governance_path = Path("schemas/tag-governance.yaml")
+    governance = _load_yaml(root / governance_path, errors)
+    if not isinstance(governance, dict) or not isinstance(frontmatter_tag_rules, dict):
+        errors.append(
+            "tag governance/frontmatter mismatch: both tag contracts must be mappings"
+        )
+        return
+    governance_rules = governance.get("rules")
+    if not isinstance(governance_rules, dict):
+        errors.append("schemas/tag-governance.yaml: rules must be a YAML mapping")
+        return
+
+    expected_governance = {
+        "min_per_essay": frontmatter_tag_rules.get("min_items"),
+        "max_per_essay": frontmatter_tag_rules.get("max_items"),
+        "format": TAG_GOVERNANCE_FORMAT,
+        "pattern": frontmatter_tag_rules.get("item_pattern"),
+    }
+    actual_governance = {
+        key: governance_rules.get(key) for key in expected_governance
+    }
+    if actual_governance != expected_governance:
+        errors.append(
+            "tag governance/frontmatter mismatch: "
+            f"expected={expected_governance}, actual={actual_governance}"
+        )
+
+    preferred_tags = governance.get("preferred_tags")
+    if not isinstance(preferred_tags, list) or not all(
+        isinstance(tag, str) for tag in preferred_tags
+    ):
+        errors.append(
+            "schemas/tag-governance.yaml: preferred_tags must be a list of strings"
+        )
+        return
+    duplicates = sorted(
+        tag for tag in set(preferred_tags) if preferred_tags.count(tag) > 1
+    )
+    if duplicates:
+        errors.append(
+            f"schemas/tag-governance.yaml: duplicate preferred tags: {duplicates}"
+        )
+    pattern = governance_rules.get("pattern")
+    for tag in preferred_tags:
+        matched = _matches_pattern(
+            pattern,
+            tag,
+            "schemas/tag-governance.yaml: preferred_tags",
+            errors,
+        )
+        if matched is False:
+            errors.append(
+                "schemas/tag-governance.yaml: preferred tag does not match "
+                f"the governed pattern: {tag!r}"
+            )
 
 
 def _validate_repository_identity(root: Path, errors: list[str]) -> None:
     """Keep the machine-readable owner and generated contexts canonical."""
-    seed_path = root / "seed.yaml"
-    seed = _load_yaml(seed_path, errors)
-    if isinstance(seed, dict):
-        expected_fields = {
-            "org": CANONICAL_ORGANIZATION,
-            "repo": CANONICAL_REPOSITORY,
-        }
+    for relative_path, expected_fields in CANONICAL_MAPPING_IDENTITIES.items():
+        data = _load_yaml(root / relative_path, errors)
+        if not isinstance(data, dict):
+            errors.append(f"{relative_path}: identity document must be a YAML mapping")
+            continue
         for field, expected in expected_fields.items():
-            actual = seed.get(field)
+            actual = data.get(field)
             if actual != expected:
                 errors.append(
-                    f"seed.yaml: expected {field}={expected!r}, found {actual!r}"
+                    f"{relative_path}: expected {field}={expected!r}, found {actual!r}"
                 )
 
     for relative_path, expected_lines in CANONICAL_IDENTITY_LINES.items():
@@ -798,6 +1057,23 @@ def _validate_repository_identity(root: Path, errors: list[str]) -> None:
             errors.append(
                 f"{relative_path}: stale legacy repository owner {legacy_owner!r}"
             )
+
+    for relative_path, target_owners in IDENTITY_URL_TARGETS.items():
+        try:
+            content = (root / relative_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"{relative_path}: cannot audit repository URLs: {exc}")
+            continue
+        for match in GITHUB_REPOSITORY_URL.finditer(content):
+            repository = match.group("repo").removesuffix(".git")
+            expected_owner = target_owners.get(repository)
+            actual_owner = match.group("owner")
+            if expected_owner is not None and actual_owner != expected_owner:
+                errors.append(
+                    f"{relative_path}: noncanonical GitHub owner for "
+                    f"{repository!r}: expected={expected_owner!r}, "
+                    f"actual={actual_owner!r}"
+                )
 
 
 def validate(root: Path) -> list[str]:
@@ -851,6 +1127,7 @@ def validate(root: Path) -> list[str]:
         return errors
     required_fields = set(required_map)
     allowed_fields = required_fields | set(optional_map)
+    _validate_tag_governance(root, required_map.get("tags"), errors)
 
     for path, expected_category in sorted(ESSAY_CATEGORIES.items()):
         frontmatter = frontmatters.get(path)
@@ -878,7 +1155,19 @@ def validate(root: Path) -> list[str]:
                 errors.append(f"{path}: expected {field}={expected!r}, found {actual!r}")
 
     related_rules = required_map.get("related_repos", {})
-    related_pattern = re.compile(related_rules.get("item_pattern", r"(?!)"))
+    related_pattern_text = (
+        related_rules.get("item_pattern") if isinstance(related_rules, dict) else None
+    )
+    try:
+        if not isinstance(related_pattern_text, str):
+            raise TypeError("item_pattern must be a string")
+        related_pattern = re.compile(related_pattern_text)
+    except (TypeError, re.error) as exc:
+        errors.append(
+            "schemas/frontmatter-schema.yaml: invalid related_repos item_pattern: "
+            f"{exc}"
+        )
+        related_pattern = None
     valid_related_repos = (
         "organvm/essay-pipeline",
         "organvm/editorial-standards",
@@ -905,18 +1194,19 @@ def validate(root: Path) -> list[str]:
         "organvm/essay-pipeline/readme",
         "organvm/essay-pipeline?tab=readme",
     )
-    for slug in valid_related_repos:
-        if related_pattern.fullmatch(slug) is None:
-            errors.append(
-                "schemas/frontmatter-schema.yaml: rejected canonical "
-                f"related_repos slug: {slug}"
-            )
-    for slug in invalid_related_repos:
-        if related_pattern.fullmatch(slug) is not None:
-            errors.append(
-                "schemas/frontmatter-schema.yaml: accepted invalid "
-                f"related_repos slug: {slug}"
-            )
+    if related_pattern is not None:
+        for slug in valid_related_repos:
+            if related_pattern.fullmatch(slug) is None:
+                errors.append(
+                    "schemas/frontmatter-schema.yaml: rejected canonical "
+                    f"related_repos slug: {slug}"
+                )
+        for slug in invalid_related_repos:
+            if related_pattern.fullmatch(slug) is not None:
+                errors.append(
+                    "schemas/frontmatter-schema.yaml: accepted invalid "
+                    f"related_repos slug: {slug}"
+                )
 
     _validate_log_template(root, errors)
     _validate_readme(root, required_map, errors)
@@ -928,9 +1218,10 @@ def validate(root: Path) -> list[str]:
             errors.append(f"{relative_path}: required reader-mode template missing")
             continue
         content = path.read_text(encoding="utf-8")
-        if not content.lstrip().startswith("# "):
+        content_lines = _rendered_markdown_lines(relative_path, content, errors)
+        rendered_content = "\n".join(content_lines)
+        if not rendered_content.lstrip().startswith("# "):
             errors.append(f"{relative_path}: must start with a level-one heading")
-        content_lines = content.splitlines()
         _validate_reader_structure(
             relative_path,
             content_lines,

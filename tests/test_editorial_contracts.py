@@ -106,6 +106,17 @@ class EditorialContractTests(unittest.TestCase):
 
         self.assert_contract_error("frontmatter table/schema field order mismatch")
 
+    def test_rejects_unrepresented_additive_frontmatter_rule(self) -> None:
+        path = self.fixture_root / "schemas/frontmatter-schema.yaml"
+        original = path.read_text(encoding="utf-8")
+        self.assertIn("    min: 500\n", original)
+        path.write_text(
+            original.replace("    min: 500\n", "    min: 500\n    max: 1000\n", 1),
+            encoding="utf-8",
+        )
+
+        self.assert_contract_error("renderer does not cover schema rules")
+
     def test_rejects_gap_before_frontmatter_table_data(self) -> None:
         path = self.fixture_root / "README.md"
         original = path.read_text(encoding="utf-8")
@@ -154,6 +165,45 @@ class EditorialContractTests(unittest.TestCase):
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
         self.assert_contract_error("required template markers are out of order")
+
+        path.write_text(
+            original.replace(
+                "## Project at a glance\n\n| | |",
+                "## Project at a glance\n\n## Intervening section\n\n| | |",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("must remain within section")
+
+    def test_binds_every_required_reader_table_to_its_section(self) -> None:
+        mutations = (
+            (
+                "templates/repository-readme-v2.md",
+                "## Choose your reading path\n\n| I am reading as… | Start here |",
+                "## Choose your reading path\n\n## Detached route table\n\n| I am reading as… | Start here |",
+            ),
+            (
+                "templates/evidence.md",
+                "## Assertion evidence\n\n| ID | Claim | Claim posture | Assertion class | Verification state | Evidence | Freshness |",
+                "## Assertion evidence\n\n## Detached assertions\n\n| ID | Claim | Claim posture | Assertion class | Verification state | Evidence | Freshness |",
+            ),
+            (
+                "templates/evidence.md",
+                "## Project limitations\n\n| ID | Limitation | Related assertion |",
+                "## Project limitations\n\n## Detached limitations\n\n| ID | Limitation | Related assertion |",
+            ),
+        )
+        for relative_path, current, replacement in mutations:
+            with self.subTest(path=relative_path, replacement=replacement):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("must remain within section")
+                path.write_text(original, encoding="utf-8")
 
     def test_requires_every_at_a_glance_row_contiguously(self) -> None:
         path = self.fixture_root / "templates/repository-readme-v2.md"
@@ -218,6 +268,18 @@ class EditorialContractTests(unittest.TestCase):
                 "**Org:** `organvm`",
                 "**Org:** `organvm-v-logos`",
                 "organvm-v-logos",
+            ),
+            (
+                "ecosystem.yaml",
+                "repo: editorial-standards",
+                "repo: wrong-repository",
+                "ecosystem.yaml: expected repo",
+            ),
+            (
+                "ecosystem.yaml",
+                "organ: V",
+                "organ: VI",
+                "ecosystem.yaml: expected organ",
             ),
         )
         for relative_path, canonical, replacement, expected_error in mutations:
@@ -289,6 +351,13 @@ class EditorialContractTests(unittest.TestCase):
         )
         self.assert_contract_error("canonical identity lines for prefix")
 
+        readme_path.write_text(
+            original_readme
+            + "\nSee https://github.com/other/editorial-standards/issues/1.\n",
+            encoding="utf-8",
+        )
+        self.assert_contract_error("noncanonical GitHub owner")
+
     def test_rejects_missing_or_unclassified_schema_files(self) -> None:
         required_schema_files = (
             "category-taxonomy.yaml",
@@ -316,14 +385,83 @@ class EditorialContractTests(unittest.TestCase):
         nested.write_text("schema_version: '1.0'\n", encoding="utf-8")
         self.assert_contract_error("schema inventory mismatch")
 
+    def test_rejects_empty_required_schema(self) -> None:
+        path = self.fixture_root / "schemas/reader-mode-rubric.yaml"
+        path.write_text("", encoding="utf-8")
+
+        self.assert_contract_error("schema must be a YAML mapping")
+
     def test_rejects_missing_local_ci_reproduction_command(self) -> None:
         path = self.fixture_root / "README.md"
         original = path.read_text(encoding="utf-8")
-        command = "python3 scripts/validate_editorial_contracts.py"
-        self.assertIn(command, original)
-        path.write_text(original.replace(command, "", 1), encoding="utf-8")
+        commands = (
+            "python3 scripts/validate_editorial_contracts.py",
+            "python3 -m unittest discover -s tests -v",
+            "git diff --check",
+        )
+        for command in commands:
+            with self.subTest(command=command, mutation="deleted"):
+                self.assertIn(command, original)
+                path.write_text(original.replace(command, "", 1), encoding="utf-8")
+                self.assert_contract_error("missing local CI reproduction command")
+                path.write_text(original, encoding="utf-8")
+            with self.subTest(command=command, mutation="commented"):
+                path.write_text(
+                    original.replace(command, f"# {command}", 1), encoding="utf-8"
+                )
+                self.assert_contract_error("missing local CI reproduction command")
+                path.write_text(original, encoding="utf-8")
 
-        self.assert_contract_error("missing local CI reproduction command")
+    def test_rejects_fenced_reader_structure_and_canonical_link(self) -> None:
+        path = self.fixture_root / "templates/audiences/general.md"
+        original = path.read_text(encoding="utf-8")
+        lines = original.splitlines()
+        self.assertTrue(lines[0].startswith("# "))
+        fenced = "\n".join((lines[0], "", "```markdown", *lines[1:], "```", ""))
+        path.write_text(fenced, encoding="utf-8")
+
+        errors = validate(self.fixture_root)
+        self.assertTrue(any("missing required template marker" in error for error in errors))
+        self.assertTrue(any("missing canonical project link" in error for error in errors))
+
+    def test_rejects_tag_governance_drift(self) -> None:
+        path = self.fixture_root / "schemas/tag-governance.yaml"
+        original = path.read_text(encoding="utf-8")
+        mutations = (
+            ("max_per_essay: 8", "max_per_essay: 9"),
+            ("min_per_essay: 2", "min_per_essay: 1"),
+            (
+                'pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"',
+                'pattern: "^[A-Za-z0-9-]+$"',
+            ),
+            (
+                "format: \"lowercase, hyphenated (e.g. 'building-in-public', not 'Building In Public')\"",
+                'format: "free-form tags"',
+            ),
+        )
+        for current, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("tag governance/frontmatter mismatch")
+                path.write_text(original, encoding="utf-8")
+
+    def test_reports_malformed_related_repository_pattern(self) -> None:
+        path = self.fixture_root / "schemas/frontmatter-schema.yaml"
+        original = path.read_text(encoding="utf-8")
+        self.assertIn("    item_pattern: >-\n", original)
+        path.write_text(
+            original.replace(
+                "    item_pattern: >-\n      ^(?:organvm|",
+                "    item_pattern: '[unterminated'\n    ignored_pattern: >-\n      ^(?:organvm|",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        self.assert_contract_error("invalid related_repos item_pattern")
 
     def test_rejects_log_template_missing_schema_required_field(self) -> None:
         path = self.fixture_root / "templates/log.md"
