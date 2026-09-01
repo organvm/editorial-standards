@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -712,6 +713,27 @@ def _load_yaml(path: Path, errors: list[str]) -> Any:
         return None
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build one JSON object while rejecting ambiguous duplicate keys."""
+    mapping: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in mapping:
+            raise ValueError(f"duplicate key {key!r}")
+        mapping[key] = value
+    return mapping
+
+
+def _load_json(path: Path, errors: list[str]) -> Any:
+    try:
+        return json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_unique_json_object,
+        )
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        errors.append(f"{path}: invalid JSON: {exc}")
+        return None
+
+
 def _publication_sections(content: str) -> tuple[list[str], list[str]] | None:
     """Split a publication only when both YAML delimiters are standalone lines."""
     lines = content.splitlines()
@@ -758,6 +780,11 @@ def _matches_type(value: Any, expected: str) -> bool:
     if expected == "object":
         return isinstance(value, dict)
     return False
+
+
+def _is_nonnegative_integer(value: Any) -> bool:
+    """Return whether a schema bound is safe to apply to a value."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _matches_pattern(
@@ -938,9 +965,11 @@ def _validate_declared_type(
         )
         if is_placeholder:
             return
-        if "min_length" in rules and len(value) < rules["min_length"]:
+        minimum = rules.get("min_length")
+        maximum = rules.get("max_length")
+        if _is_nonnegative_integer(minimum) and len(value) < minimum:
             errors.append(f"{path}: field {field!r} is shorter than allowed")
-        if "max_length" in rules and len(value) > rules["max_length"]:
+        if _is_nonnegative_integer(maximum) and len(value) > maximum:
             errors.append(f"{path}: field {field!r} is longer than allowed")
         if "enum" in rules and value not in rules["enum"]:
             errors.append(
@@ -962,20 +991,24 @@ def _validate_declared_type(
     elif expected_type == "integer":
         if value in PUBLICATION_TEMPLATE_SCALAR_PLACEHOLDERS.get(field, ()):
             return
-        if "min" in rules and value < rules["min"]:
+        minimum = rules.get("min")
+        maximum = rules.get("max")
+        if _is_nonnegative_integer(minimum) and value < minimum:
             errors.append(f"{path}: field {field!r} is below the schema minimum")
-        if "max" in rules and value > rules["max"]:
+        if _is_nonnegative_integer(maximum) and value > maximum:
             errors.append(f"{path}: field {field!r} is above the schema maximum")
     elif expected_type == "list":
         placeholder = PUBLICATION_TEMPLATE_LIST_PLACEHOLDERS.get((path, field))
         is_placeholder = placeholder is not None and tuple(value) == placeholder
+        minimum = rules.get("min_items")
+        maximum = rules.get("max_items")
         if (
             not is_placeholder
-            and "min_items" in rules
-            and len(value) < rules["min_items"]
+            and _is_nonnegative_integer(minimum)
+            and len(value) < minimum
         ):
             errors.append(f"{path}: field {field!r} has too few items")
-        if "max_items" in rules and len(value) > rules["max_items"]:
+        if _is_nonnegative_integer(maximum) and len(value) > maximum:
             errors.append(f"{path}: field {field!r} has too many items")
         item_type = rules.get("item_type")
         item_pattern = rules.get("item_pattern")
@@ -1021,9 +1054,11 @@ def _validate_schema_value(
         return
 
     if expected_type == "string":
-        if "min_length" in rules and len(value) < rules["min_length"]:
+        minimum = rules.get("min_length")
+        maximum = rules.get("max_length")
+        if _is_nonnegative_integer(minimum) and len(value) < minimum:
             errors.append(f"templates/log.md: field {field!r} is shorter than allowed")
-        if "max_length" in rules and len(value) > rules["max_length"]:
+        if _is_nonnegative_integer(maximum) and len(value) > maximum:
             errors.append(f"templates/log.md: field {field!r} is longer than allowed")
         if "enum" in rules and value not in rules["enum"]:
             errors.append(
@@ -1046,13 +1081,19 @@ def _validate_schema_value(
                 )
 
     elif expected_type == "integer":
-        if "min" in rules and value < rules["min"]:
+        minimum = rules.get("min")
+        maximum = rules.get("max")
+        if _is_nonnegative_integer(minimum) and value < minimum:
             errors.append(f"templates/log.md: field {field!r} is below the schema minimum")
+        if _is_nonnegative_integer(maximum) and value > maximum:
+            errors.append(f"templates/log.md: field {field!r} is above the schema maximum")
 
     elif expected_type == "list":
-        if "min_items" in rules and len(value) < rules["min_items"]:
+        minimum = rules.get("min_items")
+        maximum = rules.get("max_items")
+        if _is_nonnegative_integer(minimum) and len(value) < minimum:
             errors.append(f"templates/log.md: field {field!r} has too few items")
-        if "max_items" in rules and len(value) > rules["max_items"]:
+        if _is_nonnegative_integer(maximum) and len(value) > maximum:
             errors.append(f"templates/log.md: field {field!r} has too many items")
         item_type = rules.get("item_type")
         item_pattern = rules.get("item_pattern")
@@ -1238,8 +1279,17 @@ RAW_HTML_BLOCK_START = re.compile(
     rf"^[ ]{{0,3}}</?(?:{'|'.join(RAW_HTML_BLOCK_TAGS)})(?=[\s/>])",
     re.IGNORECASE,
 )
+RAW_HTML_ATTRIBUTE_NAME = r"[A-Za-z_:][A-Za-z0-9_.:-]*"
+RAW_HTML_ATTRIBUTE_VALUE = r'''(?:[^\s"'=<>`]+|'[^']*'|"[^"]*")'''
+RAW_HTML_ATTRIBUTE = (
+    rf"[ \t]+{RAW_HTML_ATTRIBUTE_NAME}"
+    rf"(?:[ \t]*=[ \t]*{RAW_HTML_ATTRIBUTE_VALUE})?"
+)
 RAW_HTML_GENERIC_START = re.compile(
-    r"^[ ]{0,3}</?[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*)?/?>[ \t]*$"
+    rf"^[ ]{{0,3}}(?:"
+    rf"<[A-Za-z][A-Za-z0-9-]*(?:{RAW_HTML_ATTRIBUTE})*[ \t]*/?>"
+    rf"|</[A-Za-z][A-Za-z0-9-]*[ \t]*>"
+    rf")[ \t]*$"
 )
 
 
@@ -2504,6 +2554,27 @@ def _validate_repository_identity(root: Path, errors: list[str]) -> None:
             if actual != expected:
                 errors.append(
                     f"{relative_path}: expected {field}={expected!r}, found {actual!r}"
+                )
+
+    registry_path = Path("value-repos.json")
+    registry = _load_json(root / registry_path, errors)
+    if registry is not None and not isinstance(registry, dict):
+        errors.append(f"{registry_path}: registry root must be a JSON mapping")
+    elif isinstance(registry, dict):
+        entries = registry.get("value_repos")
+        if not isinstance(entries, list):
+            errors.append(f"{registry_path}: value_repos must be a JSON list")
+        elif not all(isinstance(entry, dict) for entry in entries):
+            errors.append(f"{registry_path}: value_repos entries must be JSON mappings")
+        else:
+            canonical_slug = f"{CANONICAL_ORGANIZATION}/{CANONICAL_REPOSITORY}"
+            canonical_entries = [
+                entry for entry in entries if entry.get("repo") == canonical_slug
+            ]
+            if len(canonical_entries) != 1:
+                errors.append(
+                    f"{registry_path}: expected exactly one canonical registry "
+                    f"entry for {canonical_slug!r}; found {len(canonical_entries)}"
                 )
 
     for relative_path, expected_lines in CANONICAL_IDENTITY_LINES.items():

@@ -655,6 +655,49 @@ class EditorialContractTests(unittest.TestCase):
         )
         self.assert_contract_error("noncanonical GitHub owner")
 
+    def test_requires_a_parseable_value_registry_mapping(self) -> None:
+        path = self.fixture_root / "value-repos.json"
+        original = path.read_text(encoding="utf-8")
+        mutations = (
+            (
+                original.replace(
+                    '"schema_version": "1.0",',
+                    '"schema_version": "1.0",,',
+                    1,
+                ),
+                "invalid JSON",
+            ),
+            (
+                original.replace(
+                    '"schema_version": "1.0",',
+                    '"schema_version": "1.0",\n  "schema_version": "1.0",',
+                    1,
+                ),
+                "duplicate key 'schema_version'",
+            ),
+            ("[]\n", "registry root must be a JSON mapping"),
+            ('{"value_repos": {}}\n', "value_repos must be a JSON list"),
+            (
+                '{"value_repos": ["organvm/editorial-standards"]}\n',
+                "value_repos entries must be JSON mappings",
+            ),
+            (
+                '{"value_repos": [{"repo": "other/repository"}]}\n',
+                "expected exactly one canonical registry entry",
+            ),
+            (
+                '{"value_repos": ['
+                '{"repo": "organvm/editorial-standards"}, '
+                '{"repo": "organvm/editorial-standards"}]}\n',
+                "found 2",
+            ),
+        )
+        for content, expected_error in mutations:
+            with self.subTest(expected_error=expected_error):
+                path.write_text(content, encoding="utf-8")
+                self.assert_contract_error(expected_error)
+        path.write_text(original, encoding="utf-8")
+
     def test_rejects_missing_or_unclassified_schema_files(self) -> None:
         required_schema_files = (
             "category-taxonomy.yaml",
@@ -1229,7 +1272,14 @@ class EditorialContractTests(unittest.TestCase):
                 )
 
         visible_contract = [line for line in lines[1:] if line.strip()]
-        for opening, closing in (("<div>", "</div>"), ("<x-hidden>", "</x-hidden>")):
+        generic_blocks = (
+            ("<div>", "</div>"),
+            ("<x-hidden>", "</x-hidden>"),
+            ('<x-hidden data=">">', "</x-hidden>"),
+            ("<x-hidden data='<'>", "</x-hidden>"),
+            ('<x-hidden data = ">" disabled>', "</x-hidden>"),
+        )
+        for opening, closing in generic_blocks:
             with self.subTest(opening=opening):
                 hidden = "\n".join(
                     (lines[0], "", opening, *visible_contract, closing, "")
@@ -1589,6 +1639,50 @@ class EditorialContractTests(unittest.TestCase):
         )
 
         self.assert_contract_error("outside the schema enum")
+
+    def test_applies_log_integer_maximum_and_handles_invalid_bounds(self) -> None:
+        schema_path = self.fixture_root / "schemas/log-schema.yaml"
+        template_path = self.fixture_root / "templates/log.md"
+        original_schema = schema_path.read_text(encoding="utf-8")
+        original_template = template_path.read_text(encoding="utf-8")
+        commits_rule = "      commits:\n        type: integer\n        min: 0\n"
+        activity = (
+            "activity:\n"
+            '  since: "2026-09-01"\n'
+            "  commits: 1\n"
+            "  repos_active: 0\n"
+            "  files_changed: 0\n"
+        )
+        self.assertIn(commits_rule, original_schema)
+        self.assertIn("mood: focused\n", original_template)
+        template_path.write_text(
+            original_template.replace(
+                "mood: focused\n",
+                "mood: focused\n" + activity,
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        schema_path.write_text(
+            original_schema.replace(
+                commits_rule,
+                commits_rule + "        max: 0\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("field 'activity.commits' is above")
+
+        schema_path.write_text(
+            original_schema.replace(
+                commits_rule,
+                commits_rule + "        max: invalid\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("max must be a nonnegative integer")
 
     def test_validates_every_log_schema_rule_without_template_usage(self) -> None:
         path = self.fixture_root / "schemas/log-schema.yaml"
