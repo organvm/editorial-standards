@@ -461,6 +461,47 @@ class EditorialContractTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
+    def test_pins_every_audience_route_row_and_destination(self) -> None:
+        path = self.fixture_root / "templates/repository-readme-v2.md"
+        original = path.read_text(encoding="utf-8")
+        rows = (
+            "| A general reader | [Two-minute explanation](docs/audiences/general.md) |",
+            "| A software engineer | [Technical architecture](docs/audiences/technical.md) |",
+            "| A humanities scholar | [Conceptual and cultural framing](docs/audiences/humanities.md) |",
+            "| An industry practitioner | [Operational applications](docs/audiences/business.md) |",
+            "| A hiring manager or evaluator | [Contribution and evidence](docs/audiences/evaluator.md) |",
+        )
+        for row in rows:
+            with self.subTest(row=row, mutation="deleted"):
+                self.assertIn(row, original)
+                path.write_text(
+                    original.replace(f"{row}\n", "", 1), encoding="utf-8"
+                )
+                self.assert_contract_error("row labels/order mismatch")
+                path.write_text(original, encoding="utf-8")
+
+            with self.subTest(row=row, mutation="destination drift"):
+                path.write_text(
+                    original.replace(
+                        row,
+                        row.replace("docs/audiences/", "docs/disabled/"),
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("canonical rows mismatch")
+                path.write_text(original, encoding="utf-8")
+
+        path.write_text(
+            original.replace(
+                f"{rows[0]}\n{rows[1]}",
+                f"{rows[1]}\n{rows[0]}",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("row labels/order mismatch")
+
     def test_requires_every_at_a_glance_row_contiguously(self) -> None:
         path = self.fixture_root / "templates/repository-readme-v2.md"
         original = path.read_text(encoding="utf-8")
@@ -683,6 +724,36 @@ class EditorialContractTests(unittest.TestCase):
                 self.assert_contract_error("missing local CI reproduction command")
                 path.write_text(original, encoding="utf-8")
 
+    def test_requires_license_and_fail_closed_structure_checks(self) -> None:
+        license_path = self.fixture_root / "LICENSE"
+        self.assertTrue(license_path.is_file())
+        license_path.unlink()
+        self.assert_contract_error("required repository license file is missing")
+
+        readme_path = self.fixture_root / "README.md"
+        workflow_path = self.fixture_root / ".github/workflows/ci.yml"
+        readme = readme_path.read_text(encoding="utf-8")
+        workflow = workflow_path.read_text(encoding="utf-8")
+        command = (
+            'test -f "LICENSE" && echo "::notice::License file found" || exit 1'
+        )
+        self.assertIn(command, readme)
+        self.assertIn(command, workflow)
+
+        readme_path.write_text(readme.replace(command, "", 1), encoding="utf-8")
+        self.assert_contract_error("missing local CI reproduction command")
+        readme_path.write_text(readme, encoding="utf-8")
+
+        workflow_path.write_text(
+            workflow.replace(
+                command,
+                'test -f "LICENSE" || echo "::warning::No license file found"',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("structure validation command must fail closed")
+
     def test_requires_local_ci_commands_once_and_in_hosted_order(self) -> None:
         path = self.fixture_root / "README.md"
         original = path.read_text(encoding="utf-8")
@@ -812,6 +883,108 @@ class EditorialContractTests(unittest.TestCase):
         path.write_text(reordered, encoding="utf-8")
         self.assert_contract_error("hosted contract checks must remain in canonical order")
 
+    def test_pins_hosted_pull_request_trigger_and_step_inventory(self) -> None:
+        path = self.fixture_root / ".github/workflows/ci.yml"
+        original = path.read_text(encoding="utf-8")
+        trigger = (
+            "  pull_request:\n"
+            "    branches: [ main, master, develop ]\n"
+        )
+        self.assertIn(trigger, original)
+        trigger_mutations = (
+            "",
+            "  pull_request:\n    branches: [ develop ]\n",
+            "  pull_request:\n    branches-ignore: [ main ]\n",
+            "  pull_request:\n"
+            "    branches: [ main, master, develop ]\n"
+            "    paths: [ docs/** ]\n",
+            "  pull_request:\n"
+            "    branches: [ main, master, develop ]\n"
+            "    paths-ignore: [ scripts/**, tests/** ]\n",
+            "  pull_request:\n"
+            "    branches: [ main, master, develop ]\n"
+            "    types: [ opened ]\n",
+        )
+        for replacement in trigger_mutations:
+            with self.subTest(trigger=replacement.strip() or "deleted"):
+                path.write_text(
+                    original.replace(trigger, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("workflow triggers must be exactly")
+                path.write_text(original, encoding="utf-8")
+
+        push_trigger = "  push:\n    branches: [ main, master, develop ]\n"
+        self.assertIn(push_trigger, original)
+        for replacement in (
+            "",
+            "  push:\n    branches: [ develop ]\n",
+            "  push:\n"
+            "    branches: [ main, master, develop ]\n"
+            "    paths-ignore: [ scripts/**, tests/** ]\n",
+        ):
+            with self.subTest(push_trigger=replacement.strip() or "deleted"):
+                path.write_text(
+                    original.replace(push_trigger, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("workflow triggers must be exactly")
+                path.write_text(original, encoding="utf-8")
+
+        path.write_text(
+            original.replace("  workflow_dispatch:\n", "", 1), encoding="utf-8"
+        )
+        self.assert_contract_error("workflow triggers must be exactly")
+
+        step_names = (
+            "Checkout code",
+            "Set up Python",
+            "Install dependencies",
+            "Validate YAML schemas",
+            "Validate editorial contracts",
+            "Run adversarial contract regressions",
+            "Validate structure",
+            "Success",
+        )
+        for name in step_names:
+            marker = f"      - name: {name}\n"
+            self.assertIn(marker, original)
+            with self.subTest(name=name, mutation="renamed"):
+                path.write_text(
+                    original.replace(marker, f"      - name: {name} renamed\n", 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("step inventory/order mismatch")
+                path.write_text(original, encoding="utf-8")
+
+        success_block = (
+            "      - name: Success\n"
+            "        run: echo \"::notice::Editorial Standards CI passed\"\n"
+        )
+        self.assertIn(success_block, original)
+        path.write_text(original.replace(success_block, "", 1), encoding="utf-8")
+        self.assert_contract_error("step inventory/order mismatch")
+
+        extra_step = (
+            "      - name: Rewrite protected sources\n"
+            "        run: git checkout origin/main -- scripts tests\n\n"
+        )
+        path.write_text(
+            original.replace(success_block, f"{extra_step}{success_block}", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("step inventory/order mismatch")
+
+        path.write_text(
+            original.replace(
+                "  validate:\n    runs-on: ubuntu-latest\n",
+                "  validate:\n"
+                "    name: redirected-check\n"
+                "    runs-on: ubuntu-latest\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("validate job mapping must contain exactly")
+
     def test_rejects_protected_hosted_ci_execution_controls(self) -> None:
         path = self.fixture_root / ".github/workflows/ci.yml"
         original = path.read_text(encoding="utf-8")
@@ -837,6 +1010,7 @@ class EditorialContractTests(unittest.TestCase):
                         encoding="utf-8",
                     )
                     self.assert_contract_error("must contain only canonical keys")
+                    self.assert_contract_error("execution controls are forbidden")
                     path.write_text(original, encoding="utf-8")
 
         workflow_controls = (
@@ -1636,6 +1810,53 @@ class EditorialContractTests(unittest.TestCase):
         )
 
         self.assert_contract_error("field 'word_count' must have type 'integer'")
+
+    def test_validates_populated_publication_scalar_constraints(self) -> None:
+        path = self.fixture_root / "templates/guide.md"
+        original = path.read_text(encoding="utf-8")
+        mutations = (
+            (
+                'author: "@4444J99"',
+                'author: "4444J99"',
+                "does not match the schema pattern",
+            ),
+            (
+                'author: "@4444J99"',
+                'author: ""',
+                "does not match the schema pattern",
+            ),
+            (
+                'date: "YYYY-MM-DD"',
+                'date: "September 1"',
+                "does not match the schema pattern",
+            ),
+            (
+                'date: "YYYY-MM-DD"',
+                'date: ""',
+                "does not match the schema pattern",
+            ),
+            ('title: ""', 'title: "short"', "is shorter than allowed"),
+            ('excerpt: ""', 'excerpt: "short"', "is shorter than allowed"),
+            (
+                'portfolio_relevance: ""',
+                'portfolio_relevance: "LOW"',
+                "outside the schema enum",
+            ),
+            (
+                'reading_time: ""',
+                'reading_time: "soon"',
+                "does not match the schema pattern",
+            ),
+            ("word_count: 0", "word_count: 1", "below the schema minimum"),
+        )
+        for current, replacement, expected_error in mutations:
+            with self.subTest(field=current.split(":", 1)[0], value=replacement):
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error(expected_error)
+                path.write_text(original, encoding="utf-8")
 
     def test_rejects_string_instead_of_essay_list(self) -> None:
         path = self.fixture_root / "templates/guide.md"

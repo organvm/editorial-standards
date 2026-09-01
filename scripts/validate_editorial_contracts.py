@@ -123,9 +123,10 @@ REQUIRED_LOCAL_CI_COMMANDS = (
     "for f in glob.glob('schemas/*.yaml'):",
     "python3 scripts/validate_editorial_contracts.py",
     "python3 -m unittest discover -s tests -v",
-    "test -f README.md",
-    "test -f LICENSE",
-    "test -f docs/reader-mode-documentation.md",
+    'test -f "README.md" && echo "::notice::README.md found" || exit 1',
+    'test -f "LICENSE" && echo "::notice::License file found" || exit 1',
+    'test -f "docs/reader-mode-documentation.md" && echo '
+    '"::notice::Reader-mode standard found" || exit 1',
     "python3 -m py_compile scripts/validate_editorial_contracts.py tests/test_editorial_contracts.py",
     "git diff --check",
 )
@@ -140,6 +141,18 @@ REQUIRED_HOSTED_CI_COMMAND_STEPS = (
     ),
 )
 REQUIRED_HOSTED_CI_RUNNER = "ubuntu-latest"
+REQUIRED_HOSTED_CI_JOB_KEYS = {"runs-on", "steps"}
+REQUIRED_HOSTED_CI_STEP_NAMES = (
+    "Checkout code",
+    "Set up Python",
+    "Install dependencies",
+    "Validate YAML schemas",
+    "Validate editorial contracts",
+    "Run adversarial contract regressions",
+    "Validate structure",
+    "Success",
+)
+REQUIRED_PULL_REQUEST_BRANCHES = ("main", "master", "develop")
 PROTECTED_HOSTED_CI_STEP_KEYS = {"name", "run"}
 FORBIDDEN_HOSTED_CI_WORKFLOW_CONTROL_KEYS = {"defaults", "env"}
 FORBIDDEN_HOSTED_CI_JOB_CONTROL_KEYS = {
@@ -149,6 +162,14 @@ FORBIDDEN_HOSTED_CI_JOB_CONTROL_KEYS = {
     "if",
     "strategy",
     "timeout-minutes",
+}
+FORBIDDEN_HOSTED_CI_STEP_CONTROL_KEYS = {
+    "continue-on-error",
+    "env",
+    "if",
+    "shell",
+    "timeout-minutes",
+    "working-directory",
 }
 REQUIRED_YAML_VALIDATION_COMMAND = "\n".join(
     (
@@ -170,6 +191,14 @@ REQUIRED_YAML_VALIDATION_COMMAND = "\n".join(
         "    sys.exit(1)",
         "print(f'All {len(glob.glob(\\\"schemas/*.yaml\\\"))} schema files valid')",
         '"',
+    )
+)
+REQUIRED_STRUCTURE_VALIDATION_COMMAND = "\n".join(
+    (
+        'test -f "README.md" && echo "::notice::README.md found" || exit 1',
+        'test -f "LICENSE" && echo "::notice::License file found" || exit 1',
+        'test -f "docs/reader-mode-documentation.md" && echo '
+        '"::notice::Reader-mode standard found" || exit 1',
     )
 )
 CANONICAL_MAPPING_IDENTITIES = {
@@ -506,6 +535,16 @@ REQUIRED_READER_TABLE_ROW_LABELS = {
         "**Known limitations**",
     ),
     (
+        Path("templates/repository-readme-v2.md"),
+        ("I am reading as…", "Start here"),
+    ): (
+        "A general reader",
+        "A software engineer",
+        "A humanities scholar",
+        "An industry practitioner",
+        "A hiring manager or evaluator",
+    ),
+    (
         Path("templates/evidence.md"),
         (
             "ID",
@@ -523,6 +562,31 @@ REQUIRED_READER_TABLE_ROW_LABELS = {
     ): ("[limitation-id]",),
 }
 REQUIRED_READER_TABLE_ROWS = {
+    (
+        Path("templates/repository-readme-v2.md"),
+        ("I am reading as…", "Start here"),
+    ): (
+        (
+            "A general reader",
+            "[Two-minute explanation](docs/audiences/general.md)",
+        ),
+        (
+            "A software engineer",
+            "[Technical architecture](docs/audiences/technical.md)",
+        ),
+        (
+            "A humanities scholar",
+            "[Conceptual and cultural framing](docs/audiences/humanities.md)",
+        ),
+        (
+            "An industry practitioner",
+            "[Operational applications](docs/audiences/business.md)",
+        ),
+        (
+            "A hiring manager or evaluator",
+            "[Contribution and evidence](docs/audiences/evaluator.md)",
+        ),
+    ),
     (
         Path("templates/evidence.md"),
         (
@@ -599,6 +663,14 @@ TAG_GOVERNANCE_FORMAT = (
     "lowercase, hyphenated (e.g. 'building-in-public', not 'Building In Public')"
 )
 READING_TIME_PATTERN = r"^\d+ min$"
+PUBLICATION_TEMPLATE_SCALAR_PLACEHOLDERS = {
+    "title": ("",),
+    "date": ("YYYY-MM-DD",),
+    "excerpt": ("",),
+    "portfolio_relevance": ("",),
+    "reading_time": ("",),
+    "word_count": (0,),
+}
 RELATED_REPOSITORY_PATTERN = (
     r"^(?:organvm|organvm-(?:i|ii|iii|iv|v|vi|vii|viii)-[a-z0-9]+"
     r"(?:-[a-z0-9]+)*|meta-organvm(?:-[a-z0-9]+)*)/"
@@ -676,7 +748,7 @@ def _matches_pattern(
         errors.append(f"{context}: schema pattern must be a string")
         return None
     try:
-        return re.fullmatch(pattern, value) is not None
+        return re.search(pattern, value) is not None
     except re.error as exc:
         errors.append(f"{context}: invalid schema regex pattern: {exc}")
         return None
@@ -831,13 +903,47 @@ def _validate_declared_type(
     field: str,
     errors: list[str],
 ) -> None:
-    """Validate template structure without applying publish-time value bounds."""
+    """Validate populated template values while preserving explicit placeholders."""
     expected_type = rules.get("type")
     if not isinstance(expected_type, str) or not _matches_type(value, expected_type):
         errors.append(f"{path}: field {field!r} must have type {expected_type!r}")
         return
 
-    if expected_type == "list":
+    if expected_type == "string":
+        is_placeholder = value in PUBLICATION_TEMPLATE_SCALAR_PLACEHOLDERS.get(
+            field, ()
+        )
+        if is_placeholder:
+            return
+        if "min_length" in rules and len(value) < rules["min_length"]:
+            errors.append(f"{path}: field {field!r} is shorter than allowed")
+        if "max_length" in rules and len(value) > rules["max_length"]:
+            errors.append(f"{path}: field {field!r} is longer than allowed")
+        if "enum" in rules and value not in rules["enum"]:
+            errors.append(
+                f"{path}: field {field!r} has value {value!r} outside the schema enum"
+            )
+        pattern = rules.get("pattern")
+        if pattern:
+            matched = _matches_pattern(
+                pattern,
+                value,
+                f"{path}: field {field!r}",
+                errors,
+            )
+            if matched is False:
+                errors.append(
+                    f"{path}: field {field!r} value {value!r} does not match "
+                    "the schema pattern"
+                )
+    elif expected_type == "integer":
+        if value in PUBLICATION_TEMPLATE_SCALAR_PLACEHOLDERS.get(field, ()):
+            return
+        if "min" in rules and value < rules["min"]:
+            errors.append(f"{path}: field {field!r} is below the schema minimum")
+        if "max" in rules and value > rules["max"]:
+            errors.append(f"{path}: field {field!r} is above the schema maximum")
+    elif expected_type == "list":
         item_type = rules.get("item_type")
         item_pattern = rules.get("item_pattern")
         for index, item in enumerate(value):
@@ -1643,6 +1749,20 @@ def _validate_readme(
                 ".github/workflows/ci.yml: workflow-level execution controls "
                 f"are forbidden for protected checks: {workflow_controls}"
             )
+        workflow_triggers = workflow.get("on")
+        if workflow_triggers is None and True in workflow:
+            # PyYAML's YAML 1.1 resolver parses the plain key ``on`` as True.
+            workflow_triggers = workflow[True]
+        expected_workflow_triggers = {
+            "push": {"branches": list(REQUIRED_PULL_REQUEST_BRANCHES)},
+            "pull_request": {"branches": list(REQUIRED_PULL_REQUEST_BRANCHES)},
+            "workflow_dispatch": None,
+        }
+        if workflow_triggers != expected_workflow_triggers:
+            errors.append(
+                ".github/workflows/ci.yml: workflow triggers must be exactly "
+                f"{expected_workflow_triggers!r}; found {workflow_triggers!r}"
+            )
     jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
     validate_job = jobs.get("validate") if isinstance(jobs, dict) else None
     if isinstance(validate_job, dict):
@@ -1659,11 +1779,38 @@ def _validate_readme(
                 ".github/workflows/ci.yml: validate job runner must be exactly "
                 f"{REQUIRED_HOSTED_CI_RUNNER!r}"
             )
+        if set(validate_job) != REQUIRED_HOSTED_CI_JOB_KEYS:
+            errors.append(
+                ".github/workflows/ci.yml: validate job mapping must contain "
+                f"exactly {sorted(REQUIRED_HOSTED_CI_JOB_KEYS)}; found "
+                f"{sorted(map(str, validate_job))}"
+            )
     workflow_steps = (
         validate_job.get("steps") if isinstance(validate_job, dict) else None
     )
     if not isinstance(workflow_steps, list):
         workflow_steps = []
+    actual_step_names = tuple(
+        step.get("name") if isinstance(step, dict) else None
+        for step in workflow_steps
+    )
+    if actual_step_names != REQUIRED_HOSTED_CI_STEP_NAMES:
+        errors.append(
+            ".github/workflows/ci.yml: validate job step inventory/order mismatch: "
+            f"expected={list(REQUIRED_HOSTED_CI_STEP_NAMES)}, "
+            f"actual={list(actual_step_names)}"
+        )
+    for index, step in enumerate(workflow_steps):
+        if not isinstance(step, dict):
+            continue
+        step_controls = sorted(
+            FORBIDDEN_HOSTED_CI_STEP_CONTROL_KEYS & set(step)
+        )
+        if step_controls:
+            errors.append(
+                ".github/workflows/ci.yml: validate job step "
+                f"{index + 1} execution controls are forbidden: {step_controls}"
+            )
 
     hosted_command_positions: list[int] = []
     hosted_command_sequence_complete = True
@@ -1743,6 +1890,21 @@ def _validate_readme(
                 "README.md: local multiline YAML command must exactly reproduce "
                 "hosted CI"
             )
+    hosted_structure_commands = [
+        step.get("run")
+        for step in workflow_steps
+        if isinstance(step, dict) and step.get("name") == "Validate structure"
+    ]
+    if (
+        len(hosted_structure_commands) != 1
+        or not isinstance(hosted_structure_commands[0], str)
+        or hosted_structure_commands[0].strip("\n")
+        != REQUIRED_STRUCTURE_VALIDATION_COMMAND
+    ):
+        errors.append(
+            ".github/workflows/ci.yml: structure validation command must fail "
+            "closed for every required file"
+        )
     obsolete_field_guidance = (
         "Must match the `slug` frontmatter field",
         "No markdown in the abstract field",
@@ -2375,6 +2537,9 @@ def _validate_repository_identity(root: Path, errors: list[str]) -> None:
 def validate(root: Path) -> list[str]:
     root = root.resolve()
     errors: list[str] = []
+
+    if not (root / "LICENSE").is_file():
+        errors.append("LICENSE: required repository license file is missing")
 
     _validate_schema_inventory(root, errors)
     _validate_reader_mode_documentation(root, errors)

@@ -51,8 +51,8 @@ jobs:
 
       - name: Validate structure
         run: |
-          test -f "README.md" && echo "::notice::README.md found" || echo "::warning::No README.md found"
-          test -f "LICENSE" && echo "::notice::License file found" || echo "::warning::No license file found"
+          test -f "README.md" && echo "::notice::README.md found" || exit 1
+          test -f "LICENSE" && echo "::notice::License file found" || exit 1
           test -f "docs/reader-mode-documentation.md" && echo "::notice::Reader-mode standard found" || exit 1
 
       - name: Success

@@ -332,9 +332,9 @@ print(f'All {len(glob.glob(\"schemas/*.yaml\"))} schema files valid')
 "
 python3 scripts/validate_editorial_contracts.py
 python3 -m unittest discover -s tests -v
-test -f README.md
-test -f LICENSE
-test -f docs/reader-mode-documentation.md
+test -f "README.md" && echo "::notice::README.md found" || exit 1
+test -f "LICENSE" && echo "::notice::License file found" || exit 1
+test -f "docs/reader-mode-documentation.md" && echo "::notice::Reader-mode standard found" || exit 1
 ```
 
 Before committing, also run the Python and whitespace static checks:
