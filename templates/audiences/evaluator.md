@@ -21,4 +21,3 @@
 - [Demo or deployment]
 - [Revision history]
 - [Claim-level evidence record](../evidence/README.md)
-
