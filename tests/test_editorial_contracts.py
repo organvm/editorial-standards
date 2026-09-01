@@ -13,6 +13,8 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from validate_editorial_contracts import (  # noqa: E402
     _find_backtick_run,
+    _markdown_destination_prefix,
+    _markdown_label_end_map,
     _strip_html_comments_from_line,
     validate,
 )
@@ -3318,6 +3320,12 @@ class EditorialContractTests(unittest.TestCase):
                 "[missing-image]"
             ),
             '![decoy](<image.png>"[Project home](../../README.md)")',
+            "[Project `]` home](../../README.md)",
+            (
+                '[Project <span data-close="]">home</span>]'
+                "(../../README.md)"
+            ),
+            r"![decoy](image\ [Project home](../../README.md))",
         )
         for route in duplicate_routes:
             with self.subTest(route=route):
@@ -3334,6 +3342,7 @@ class EditorialContractTests(unittest.TestCase):
             '<pre>\n<a href="../../README.md">Project home</a>\n</pre>',
             "![Project image][image-home]\n\n[image-home]: ../../README.md",
             "![Project image](../../README.md)",
+            r"![Project image](image\(1\).png)",
             (
                 "![decoy [Project home](../../README.md)](image.png)"
             ),
@@ -3361,11 +3370,53 @@ class EditorialContractTests(unittest.TestCase):
                 self.assertEqual([], validate(self.fixture_root))
                 path.write_text(original, encoding="utf-8")
 
+    def test_only_ascii_punctuation_can_be_escaped_in_destinations(
+        self,
+    ) -> None:
+        malformed = r"image\ [Project home](../../README.md)"
+        self.assertEqual(
+            "image\\",
+            _markdown_destination_prefix(malformed),
+        )
+        self.assertEqual(
+            r"image\(1\).png",
+            _markdown_destination_prefix(r"image\(1\).png"),
+        )
+
+    def test_pairs_labels_across_higher_precedence_inline_ranges(self) -> None:
+        labels = (
+            "[Project `]` home]",
+            '[Project <span data-close="]">home</span>]',
+            "[Project <https://example.test/a]b> home]",
+        )
+        for label in labels:
+            with self.subTest(label=label):
+                self.assertEqual(
+                    len(label) - 1,
+                    _markdown_label_end_map(label).get(0),
+                )
+
     def test_handles_many_unmatched_image_openers_in_one_pass(self) -> None:
         path = self.fixture_root / "templates/audiences/general.md"
         original = path.read_text(encoding="utf-8")
         path.write_text(
             original + "\n" + ("![" * 10_000) + "\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual([], validate(self.fixture_root))
+
+    def test_handles_many_balanced_unresolved_image_openers_in_one_pass(
+        self,
+    ) -> None:
+        path = self.fixture_root / "templates/audiences/general.md"
+        original = path.read_text(encoding="utf-8")
+        path.write_text(
+            original
+            + "\n"
+            + ("![" * 10_000)
+            + ("]" * 10_000)
+            + "\n[unrelated]: image.png\n",
             encoding="utf-8",
         )
 

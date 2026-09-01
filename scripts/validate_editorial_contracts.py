@@ -2008,6 +2008,14 @@ INLINE_HTML_TAG = re.compile(
     rf"</?[A-Za-z][A-Za-z0-9-]*(?:{RAW_HTML_ATTRIBUTE})*[ \t]*/?>",
     re.IGNORECASE,
 )
+INLINE_URI_AUTOLINK = re.compile(
+    r"<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20\x7f]*>"
+)
+INLINE_EMAIL_AUTOLINK = re.compile(
+    r"<[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*>"
+)
 MULTILINE_HTML_ATTRIBUTE = (
     rf"[ \t\r\n]+{RAW_HTML_ATTRIBUTE_NAME}"
     rf"(?:[ \t\r\n]*=[ \t\r\n]*{RAW_HTML_ATTRIBUTE_VALUE})?"
@@ -2167,6 +2175,15 @@ def _is_backslash_escaped(text: str, index: int) -> bool:
     return backslashes % 2 == 1
 
 
+def _is_commonmark_escape_start(text: str, index: int) -> bool:
+    """Return whether a backslash starts a CommonMark punctuation escape."""
+    return (
+        text[index] == "\\"
+        and index + 1 < len(text)
+        and text[index + 1] in COMMONMARK_ESCAPABLE_ASCII_PUNCTUATION
+    )
+
+
 def _find_unescaped_token(text: str, token: str, start: int) -> int:
     """Locate a CommonMark token whose first character is not escaped."""
     position = text.find(token, start)
@@ -2224,9 +2241,52 @@ def _without_inline_code(text: str) -> str:
     return "".join(visible)
 
 
+def _merge_sorted_ranges(
+    left: list[tuple[int, int]],
+    right: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Merge and coalesce two range lists that are already start-sorted."""
+    merged: list[tuple[int, int]] = []
+    left_index = 0
+    right_index = 0
+    while left_index < len(left) or right_index < len(right):
+        if right_index >= len(right) or (
+            left_index < len(left)
+            and left[left_index][0] <= right[right_index][0]
+        ):
+            current = left[left_index]
+            left_index += 1
+        else:
+            current = right[right_index]
+            right_index += 1
+        if merged and current[0] <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], current[1]))
+        else:
+            merged.append(current)
+    return merged
+
+
+def _unescaped_match_ranges(
+    pattern: re.Pattern[str],
+    text: str,
+) -> list[tuple[int, int]]:
+    """Return ranges whose CommonMark opener is not backslash-escaped."""
+    return [
+        (match.start(), match.end())
+        for match in pattern.finditer(text)
+        if not _is_backslash_escaped(text, match.start())
+    ]
+
+
 def _inline_html_tag_ranges(text: str) -> list[tuple[int, int]]:
-    """Return syntactically valid inline HTML tag ranges."""
-    return [(match.start(), match.end()) for match in INLINE_HTML_TAG.finditer(text)]
+    """Return higher-precedence inline HTML and autolink ranges."""
+    html_ranges = _unescaped_match_ranges(INLINE_HTML_TAG, text)
+    uri_ranges = _unescaped_match_ranges(INLINE_URI_AUTOLINK, text)
+    email_ranges = _unescaped_match_ranges(INLINE_EMAIL_AUTOLINK, text)
+    return _merge_sorted_ranges(
+        _merge_sorted_ranges(html_ranges, uri_ranges),
+        email_ranges,
+    )
 
 
 def _count_visible_markdown_link(lines: list[str], expected: str) -> int:
@@ -2258,10 +2318,31 @@ MARKDOWN_REFERENCE_DEFINITION = re.compile(
 )
 
 
+COMMONMARK_ESCAPABLE_ASCII_PUNCTUATION = frozenset(
+    "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+)
+COMMONMARK_REFERENCE_LABEL_MAX_LENGTH = 999
+
+
 def _markdown_reference_label(label: str) -> str:
     """Normalize a CommonMark reference label for case-insensitive lookup."""
     unescaped = re.sub(r"\\([^\w\s])", r"\1", label)
     return re.sub(r"\s+", " ", unescaped).strip().casefold()
+
+
+def _markdown_reference_key(
+    text: str,
+    opening_bracket: int,
+    closing_bracket: int,
+) -> str | None:
+    """Normalize one CommonMark-bounded reference label without large slicing."""
+    label_length = closing_bracket - opening_bracket - 1
+    if not 0 < label_length <= COMMONMARK_REFERENCE_LABEL_MAX_LENGTH:
+        return None
+    key = _markdown_reference_label(
+        text[opening_bracket + 1 : closing_bracket]
+    )
+    return key or None
 
 
 def _markdown_destination_prefix(text: str) -> str | None:
@@ -2277,7 +2358,7 @@ def _markdown_destination_prefix(text: str) -> str | None:
     depth = 0
     while cursor < len(candidate):
         character = candidate[cursor]
-        if character == "\\" and cursor + 1 < len(candidate):
+        if _is_commonmark_escape_start(candidate, cursor):
             cursor += 2
             continue
         if character in " \t":
@@ -2314,7 +2395,7 @@ def _inline_markdown_destination(
         depth = 0
         while cursor < len(line):
             character = line[cursor]
-            if character == "\\" and cursor + 1 < len(line):
+            if _is_commonmark_escape_start(line, cursor):
                 cursor += 2
                 continue
             if character == "(":
@@ -2357,13 +2438,30 @@ def _inline_markdown_destination(
 
 
 def _markdown_label_end_map(text: str) -> dict[int, int]:
-    """Index balanced, unescaped bracket pairs in one linear pass."""
+    """Index bracket pairs, skipping higher-precedence spans, in linear time."""
+    ignored_ranges = _merge_sorted_ranges(
+        _inline_code_ranges(text),
+        _inline_html_tag_ranges(text),
+    )
     openings: list[int] = []
     closing_by_opening: dict[int, int] = {}
+    range_index = 0
     cursor = 0
     while cursor < len(text):
+        while (
+            range_index < len(ignored_ranges)
+            and ignored_ranges[range_index][1] <= cursor
+        ):
+            range_index += 1
+        if (
+            range_index < len(ignored_ranges)
+            and ignored_ranges[range_index][0] <= cursor
+        ):
+            cursor = ignored_ranges[range_index][1]
+            continue
+
         character = text[cursor]
-        if character == "\\" and cursor + 1 < len(text):
+        if _is_commonmark_escape_start(text, cursor):
             cursor += 2
             continue
         if character == "[":
@@ -2408,7 +2506,10 @@ def _markdown_reference_definitions(
 
         if destination is None:
             continue
-        label = _markdown_reference_label(match.group("label"))
+        raw_label = match.group("label")
+        if len(raw_label) > COMMONMARK_REFERENCE_LABEL_MAX_LENGTH:
+            continue
+        label = _markdown_reference_label(raw_label)
         if label:
             definitions.setdefault(label, destination)
             definition_lines.update({index, consumed_line})
@@ -2445,7 +2546,6 @@ def _count_visible_markdown_destination(
             ):
                 image_end = label_ends.get(start)
                 if image_end is not None:
-                    image_label = line[start + 1 : image_end]
                     suffix = image_end + 1
                     consumed_image = suffix
                     resolved_image = False
@@ -2457,18 +2557,30 @@ def _count_visible_markdown_destination(
                     elif suffix < len(line) and line[suffix] == "[":
                         reference_end = label_ends.get(suffix)
                         if reference_end is not None:
-                            reference = line[suffix + 1 : reference_end]
-                            key = _markdown_reference_label(
-                                reference or image_label
-                            )
-                            if key in definitions:
+                            if reference_end == suffix + 1:
+                                key = _markdown_reference_key(
+                                    line,
+                                    start,
+                                    image_end,
+                                )
+                            else:
+                                key = _markdown_reference_key(
+                                    line,
+                                    suffix,
+                                    reference_end,
+                                )
+                            if key is not None and key in definitions:
                                 consumed_image = reference_end + 1
                                 resolved_image = True
-                    elif (
-                        _markdown_reference_label(image_label) in definitions
-                    ):
-                        consumed_image = image_end + 1
-                        resolved_image = True
+                    else:
+                        key = _markdown_reference_key(
+                            line,
+                            start,
+                            image_end,
+                        )
+                        if key is not None and key in definitions:
+                            consumed_image = image_end + 1
+                            resolved_image = True
                     if resolved_image:
                         cursor = max(cursor, consumed_image)
                 continue
@@ -2480,7 +2592,6 @@ def _count_visible_markdown_destination(
             end = label_ends.get(start)
             if end is None:
                 continue
-            label = line[start + 1 : end]
             after = end + 1
             destination: str | None = None
             consumed = after
@@ -2492,12 +2603,21 @@ def _count_visible_markdown_destination(
             elif after < len(line) and line[after] == "[":
                 reference_end = label_ends.get(after)
                 if reference_end is not None:
-                    reference = line[after + 1 : reference_end]
-                    key = _markdown_reference_label(reference or label)
-                    destination = definitions.get(key)
+                    if reference_end == after + 1:
+                        key = _markdown_reference_key(line, start, end)
+                    else:
+                        key = _markdown_reference_key(
+                            line,
+                            after,
+                            reference_end,
+                        )
+                    if key is not None:
+                        destination = definitions.get(key)
                     consumed = reference_end + 1
             else:
-                destination = definitions.get(_markdown_reference_label(label))
+                key = _markdown_reference_key(line, start, end)
+                if key is not None:
+                    destination = definitions.get(key)
 
             if (
                 destination is not None
