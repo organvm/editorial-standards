@@ -337,6 +337,44 @@ class EditorialContractTests(unittest.TestCase):
         path.write_text(original.replace(header, "", 1), encoding="utf-8")
         self.assert_contract_error("required table header")
 
+    def test_pins_complete_root_readme_sequence_in_its_section(self) -> None:
+        path = self.fixture_root / "docs/reader-mode-documentation.md"
+        original = path.read_text(encoding="utf-8")
+        entries = (
+            "1. project name;",
+            "2. one ordinary-language sentence stating what it is, what it does, and why;",
+            "3. verified links to the artifact, demo, or inspection path;",
+            "4. a short “What am I looking at?” explanation;",
+            "5. an audience-route table;",
+            "6. project status, primary users, authorship, evidence, and limitations at a glance.",
+        )
+        for entry in entries:
+            with self.subTest(entry=entry, mutation="deleted"):
+                self.assertIn(entry, original)
+                path.write_text(
+                    original.replace(f"{entry}\n", "", 1), encoding="utf-8"
+                )
+                self.assert_contract_error("root README sequence mismatch")
+                path.write_text(original, encoding="utf-8")
+
+        path.write_text(
+            original.replace(
+                f"{entries[0]}\n{entries[1]}",
+                f"{entries[1]}\n{entries[0]}",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("root README sequence mismatch")
+
+        ordered_list = "\n".join(entries)
+        path.write_text(
+            original.replace(ordered_list, f"```text\n{ordered_list}\n```", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("root README sequence mismatch")
+        path.write_text(original, encoding="utf-8")
+
     def test_rejects_empty_reader_contract_table_cells(self) -> None:
         path = self.fixture_root / "docs/reader-mode-documentation.md"
         original = path.read_text(encoding="utf-8")
@@ -774,6 +812,97 @@ class EditorialContractTests(unittest.TestCase):
         path.write_text(reordered, encoding="utf-8")
         self.assert_contract_error("hosted contract checks must remain in canonical order")
 
+    def test_rejects_protected_hosted_ci_execution_controls(self) -> None:
+        path = self.fixture_root / ".github/workflows/ci.yml"
+        original = path.read_text(encoding="utf-8")
+        protected_steps = (
+            "Validate editorial contracts",
+            "Run adversarial contract regressions",
+        )
+        step_controls = (
+            "        if: ${{ false }}\n",
+            "        continue-on-error: true\n",
+            "        working-directory: bypass\n",
+            "        shell: bash {0} || true\n",
+            "        env:\n          PYTHONPATH: bypass\n",
+            "        timeout-minutes: 1\n",
+        )
+        for name in protected_steps:
+            marker = f"      - name: {name}\n"
+            self.assertIn(marker, original)
+            for control in step_controls:
+                with self.subTest(name=name, control=control.strip()):
+                    path.write_text(
+                        original.replace(marker, f"{marker}{control}", 1),
+                        encoding="utf-8",
+                    )
+                    self.assert_contract_error("must contain only canonical keys")
+                    path.write_text(original, encoding="utf-8")
+
+        workflow_controls = (
+            "env:\n  PYTHONPATH: bypass\n",
+            "defaults:\n  run:\n    shell: bash {0} || true\n",
+        )
+        for control in workflow_controls:
+            with self.subTest(scope="workflow", control=control.splitlines()[0]):
+                path.write_text(
+                    original.replace("jobs:\n", f"{control}\njobs:\n", 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("workflow-level execution controls")
+                path.write_text(original, encoding="utf-8")
+
+        job_controls = (
+            "    if: ${{ false }}\n",
+            "    continue-on-error: true\n",
+            "    defaults:\n      run:\n        working-directory: bypass\n",
+            "    env:\n      PYTHONPATH: bypass\n",
+            "    timeout-minutes: 1\n",
+            "    strategy:\n      matrix:\n        os: [ubuntu-latest]\n",
+        )
+        job_marker = "  validate:\n"
+        for control in job_controls:
+            with self.subTest(scope="job", control=control.strip().splitlines()[0]):
+                path.write_text(
+                    original.replace(job_marker, f"{job_marker}{control}", 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("validate job execution controls")
+                path.write_text(original, encoding="utf-8")
+
+        path.write_text(
+            original.replace(
+                "  validate:\n    runs-on: ubuntu-latest\n",
+                "  validate:\n"
+                "    strategy:\n"
+                "      matrix:\n"
+                "        os: [ubuntu-latest]\n"
+                "    runs-on: ${{ matrix.os }}\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("validate job runner must be exactly")
+
+        path.write_text(
+            original.replace(
+                "  validate:\n    runs-on: ubuntu-latest\n",
+                "  validate:\n"
+                "    strategy:\n"
+                "      matrix:\n"
+                "        command: [python3 scripts/validate_editorial_contracts.py]\n"
+                "    runs-on: ubuntu-latest\n",
+                1,
+            ).replace(
+                "run: python3 scripts/validate_editorial_contracts.py",
+                "run: ${{ matrix.command }}",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("validate job execution controls")
+        self.assert_contract_error("must run exactly")
+
     def test_rejects_fenced_reader_structure_and_canonical_link(self) -> None:
         path = self.fixture_root / "templates/audiences/general.md"
         original = path.read_text(encoding="utf-8")
@@ -870,6 +999,37 @@ class EditorialContractTests(unittest.TestCase):
 
         path.write_text(original + "\n`\nunclosed span\n", encoding="utf-8")
         self.assert_contract_error("unclosed Markdown inline-code span")
+
+    def test_multiline_inline_code_suffix_cannot_supply_block_structure(self) -> None:
+        mutations = (
+            (
+                "templates/audiences/general.md",
+                "## What is this?",
+                "`\n`## What is this?",
+                "missing required template marker",
+            ),
+            (
+                "templates/repository-readme-v2.md",
+                "| I am reading as… | Start here |",
+                "`\n`| I am reading as… | Start here |",
+                "missing required template marker",
+            ),
+            (
+                "docs/reader-mode-documentation.md",
+                "1. project name;",
+                "`\n`1. project name;",
+                "root README sequence mismatch",
+            ),
+        )
+        for relative_path, current, replacement, expected_error in mutations:
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error(expected_error)
 
     def test_rejects_reader_contracts_hidden_in_raw_html_blocks(self) -> None:
         path = self.fixture_root / "templates/audiences/general.md"
@@ -1123,6 +1283,16 @@ class EditorialContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.assert_contract_error("reader rubric dimension sentence is missing or stale")
+
+        rubric_link = (
+            "[`schemas/reader-mode-rubric.yaml`](../schemas/reader-mode-rubric.yaml)"
+        )
+        self.assertIn(rubric_link, original)
+        path.write_text(
+            original.replace(rubric_link, f"`{rubric_link}`", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("canonical reader rubric link")
 
     def test_rejects_incomplete_quality_rubric_contract(self) -> None:
         path = self.fixture_root / "schemas/quality-rubric.yaml"

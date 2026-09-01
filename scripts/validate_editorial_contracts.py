@@ -139,6 +139,17 @@ REQUIRED_HOSTED_CI_COMMAND_STEPS = (
         "python3 -m unittest discover -s tests -v",
     ),
 )
+REQUIRED_HOSTED_CI_RUNNER = "ubuntu-latest"
+PROTECTED_HOSTED_CI_STEP_KEYS = {"name", "run"}
+FORBIDDEN_HOSTED_CI_WORKFLOW_CONTROL_KEYS = {"defaults", "env"}
+FORBIDDEN_HOSTED_CI_JOB_CONTROL_KEYS = {
+    "continue-on-error",
+    "defaults",
+    "env",
+    "if",
+    "strategy",
+    "timeout-minutes",
+}
 REQUIRED_YAML_VALIDATION_COMMAND = "\n".join(
     (
         'python3 -c "',
@@ -336,6 +347,14 @@ REQUIRED_READER_MODE_DOC_MARKERS = (
     "## Audit and conversion priority",
     "## CI contract",
     "## Migration protocol",
+)
+REQUIRED_ROOT_README_SEQUENCE = (
+    "1. project name;",
+    "2. one ordinary-language sentence stating what it is, what it does, and why;",
+    "3. verified links to the artifact, demo, or inspection path;",
+    "4. a short “What am I looking at?” explanation;",
+    "5. an audience-route table;",
+    "6. project status, primary users, authorship, evidence, and limitations at a glance.",
 )
 READER_RUBRIC_DOC_SENTENCE = (
     "Score the current public documentation from 0–4 across orientation, "
@@ -1122,6 +1141,7 @@ def _strip_html_comments_from_line(
     """Strip inline code and comments while carrying both states across lines."""
     visible: list[str] = []
     cursor = 0
+    entered_in_inline_code = bool(inline_code_length)
     while cursor < len(line):
         if in_comment:
             end = line.find("-->", cursor)
@@ -1136,6 +1156,13 @@ def _strip_html_comments_from_line(
                 return "".join(visible), in_comment, inline_code_length
             cursor = code_end + inline_code_length
             inline_code_length = 0
+            if entered_in_inline_code:
+                # A code span that began on a previous physical line remains
+                # inline paragraph content after it closes.  Preserve a
+                # non-whitespace prefix so a suffix such as ``## Heading`` or
+                # ``| table |`` cannot be reinterpreted as a new block.
+                visible.append("[inline code]")
+                entered_in_inline_code = False
             continue
 
         comment_start = _find_unescaped_token(line, "<!--", cursor)
@@ -1502,6 +1529,31 @@ def _validate_reader_mode_documentation(root: Path, errors: list[str]) -> None:
         REQUIRED_READER_MODE_DOC_MARKERS,
         errors,
     )
+    sequence_heading = "## Required root README sequence"
+    try:
+        sequence_start = rendered_lines.index(sequence_heading)
+    except ValueError:
+        sequence_start = -1
+    if sequence_start >= 0:
+        sequence_end = next(
+            (
+                index
+                for index in range(sequence_start + 1, len(rendered_lines))
+                if rendered_lines[index].startswith("## ")
+            ),
+            len(rendered_lines),
+        )
+        actual_sequence = tuple(
+            line
+            for line in rendered_lines[sequence_start + 1 : sequence_end]
+            if re.fullmatch(r"\d+\.\s+.+", line)
+        )
+        if actual_sequence != REQUIRED_ROOT_README_SEQUENCE:
+            errors.append(
+                f"{relative_path}: root README sequence mismatch: "
+                f"expected={list(REQUIRED_ROOT_README_SEQUENCE)}, "
+                f"actual={list(actual_sequence)}"
+            )
     normalized = re.sub(r"\s+", " ", "\n".join(rendered_lines)).strip()
     if READER_RUBRIC_DOC_SENTENCE not in normalized:
         errors.append(
@@ -1510,7 +1562,7 @@ def _validate_reader_mode_documentation(root: Path, errors: list[str]) -> None:
     rubric_link = (
         "[`schemas/reader-mode-rubric.yaml`](../schemas/reader-mode-rubric.yaml)"
     )
-    if "\n".join(rendered_lines).count(rubric_link) != 1:
+    if rendered_lines.count(f"{rubric_link}.") != 1:
         errors.append(
             f"{relative_path}: canonical reader rubric link must appear exactly once"
         )
@@ -1582,8 +1634,31 @@ def _validate_readme(
         )
 
     workflow = _load_yaml(root / ".github/workflows/ci.yml", errors)
+    if isinstance(workflow, dict):
+        workflow_controls = sorted(
+            FORBIDDEN_HOSTED_CI_WORKFLOW_CONTROL_KEYS & set(workflow)
+        )
+        if workflow_controls:
+            errors.append(
+                ".github/workflows/ci.yml: workflow-level execution controls "
+                f"are forbidden for protected checks: {workflow_controls}"
+            )
     jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
     validate_job = jobs.get("validate") if isinstance(jobs, dict) else None
+    if isinstance(validate_job, dict):
+        job_controls = sorted(
+            FORBIDDEN_HOSTED_CI_JOB_CONTROL_KEYS & set(validate_job)
+        )
+        if job_controls:
+            errors.append(
+                ".github/workflows/ci.yml: validate job execution controls "
+                f"are forbidden: {job_controls}"
+            )
+        if validate_job.get("runs-on") != REQUIRED_HOSTED_CI_RUNNER:
+            errors.append(
+                ".github/workflows/ci.yml: validate job runner must be exactly "
+                f"{REQUIRED_HOSTED_CI_RUNNER!r}"
+            )
     workflow_steps = (
         validate_job.get("steps") if isinstance(validate_job, dict) else None
     )
@@ -1606,6 +1681,14 @@ def _validate_readme(
             hosted_command_sequence_complete = False
             continue
         index, step = matching_steps[0]
+        step_keys = set(step)
+        if step_keys != PROTECTED_HOSTED_CI_STEP_KEYS:
+            errors.append(
+                ".github/workflows/ci.yml: hosted CI step "
+                f"{step_name!r} must contain only canonical keys "
+                f"{sorted(PROTECTED_HOSTED_CI_STEP_KEYS)}; "
+                f"found {sorted(map(str, step_keys))}"
+            )
         command_invocations = [
             candidate
             for candidate in workflow_steps
