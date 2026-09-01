@@ -101,6 +101,151 @@ CANONICAL_READER_RUBRIC_SCORING_RULES = (
     "Record unknowns; do not infer authorship, adoption, or business results.",
     "Use the same rubric across classes, but rank conversion priority within class.",
 )
+CANONICAL_READER_RUBRIC_DIMENSION_POLICY = {
+    "orientation": {
+        "question": (
+            "Can a first-time reader identify the project, its purpose, "
+            "status, and next path?"
+        ),
+        "anchors": {
+            0: "No usable root README.",
+            1: (
+                "A title or fragment exists, but purpose and status "
+                "remain unclear."
+            ),
+            2: "Purpose is identifiable; status or navigation is missing.",
+            3: "Purpose, status, and next actions are clear.",
+            4: (
+                "The first screen also routes distinct audiences without "
+                "blocking the canonical depth."
+            ),
+        },
+    },
+    "technical_depth": {
+        "question": (
+            "Can a technical reader inspect, run, test, and reason about "
+            "failure boundaries?"
+        ),
+        "anchors": {
+            0: "No technical inspection path.",
+            1: (
+                "Stack or implementation is named without executable "
+                "guidance."
+            ),
+            2: (
+                "Setup or architecture exists, but important interfaces "
+                "or tests are absent."
+            ),
+            3: (
+                "Architecture, execution, interfaces, and verification "
+                "are substantially documented."
+            ),
+            4: (
+                "Operations, failure modes, security, observability, and "
+                "debt boundaries are also explicit."
+            ),
+        },
+    },
+    "conceptual_depth": {
+        "question": (
+            "Does the documentation explain the ideas, formal choices, "
+            "genealogy, or disciplinary stakes?"
+        ),
+        "anchors": {
+            0: "No conceptual framing.",
+            1: "A theme is named but not developed.",
+            2: "Concepts or theory are explained in relation to the project.",
+            3: (
+                "Formal/technical choices are connected to intellectual "
+                "or cultural consequences."
+            ),
+            4: (
+                "A rigorous, source-aware humanities or research edition "
+                "supports sustained interpretation."
+            ),
+        },
+    },
+    "commercial_relevance": {
+        "question": (
+            "Can an operational reader map the project to a real workflow "
+            "without unsupported claims?"
+        ),
+        "anchors": {
+            0: "No user or operational problem is identified.",
+            1: "Value language appears without a workflow.",
+            2: "Users, problem, inputs, and outputs are identifiable.",
+            3: "Integration, constraints, and current workaround are mapped.",
+            4: (
+                "Deployment evidence and projected value are explicitly "
+                "separated for each domain."
+            ),
+        },
+    },
+    "evidence": {
+        "question": (
+            "Are claims, status, authorship, limitations, and inspection "
+            "paths auditable?"
+        ),
+        "anchors": {
+            0: "Claims have no inspection path.",
+            1: (
+                "Source exists, but status/authorship/limitations are "
+                "unclear."
+            ),
+            2: "Tests, demo, or history support some claims.",
+            3: (
+                "Contribution, status, evidence, and limitations are "
+                "explicit."
+            ),
+            4: (
+                "Claim references expose schema-valid postures, assertion "
+                "records expose schema-valid verification states, and "
+                "project limitations clearly bound scope."
+            ),
+        },
+    },
+    "seo_surface": {
+        "question": (
+            "Does each legitimate search intent have a useful, "
+            "non-duplicative landing path?"
+        ),
+        "anchors": {
+            0: (
+                "The project is effectively undiscoverable from its "
+                "documentation."
+            ),
+            1: "Only the repository name or generic terms describe it.",
+            2: "The README uses concrete problem/domain language.",
+            3: (
+                "Distinct audience, concept, or industry pages match real "
+                "search intents."
+            ),
+            4: (
+                "A coherent topic cluster links every landing page back "
+                "to canonical facts and evidence."
+            ),
+        },
+    },
+    "cross_linking": {
+        "question": (
+            "Can a reader move vertically within the project and laterally "
+            "through related systems?"
+        ),
+        "anchors": {
+            0: "No meaningful internal or ecosystem links.",
+            1: "A few unstructured links exist.",
+            2: "README links to relevant local docs or parent project.",
+            3: (
+                "Audience pages, evidence, architecture, and related "
+                "systems are deliberately connected."
+            ),
+            4: (
+                "Typed, reciprocal links form a maintained "
+                "cross-repository knowledge graph."
+            ),
+        },
+    },
+}
 CANONICAL_AGENT_SUBSCRIPTION_LINES = tuple(
     f"- Event: `{subscription['event']}` → Action: {subscription['action']}"
     for subscription in CANONICAL_SUBSCRIPTIONS
@@ -2206,25 +2351,89 @@ def _find_backtick_run(text: str, start: int, expected_length: int) -> int:
     return -1
 
 
-def _inline_code_ranges(text: str) -> list[tuple[int, int]]:
-    """Return closed single-line CommonMark code-span ranges."""
-    ranges: list[tuple[int, int]] = []
+def _backtick_run_index(
+    text: str,
+) -> tuple[dict[int, int], dict[int, int]]:
+    """Index every run length and its next equal-length run in one pass."""
+    lengths_by_start: dict[int, int] = {}
+    next_by_start: dict[int, int] = {}
+    last_start_by_length: dict[int, int] = {}
     cursor = 0
     while cursor < len(text):
         start = text.find("`", cursor)
         if start < 0:
             break
-        run_end = start + 1
-        while run_end < len(text) and text[run_end] == "`":
-            run_end += 1
-        run_length = run_end - start
-        close = _find_backtick_run(text, run_end, run_length)
-        if close < 0:
-            break
-        end = close + run_length
-        ranges.append((start, end))
+        end = start + 1
+        while end < len(text) and text[end] == "`":
+            end += 1
+        run_length = end - start
+        lengths_by_start[start] = run_length
+        previous = last_start_by_length.get(run_length)
+        if previous is not None:
+            next_by_start[previous] = start
+        last_start_by_length[run_length] = start
         cursor = end
+    return lengths_by_start, next_by_start
+
+
+def _inline_syntax_ranges(
+    text: str,
+) -> list[tuple[int, int, str]]:
+    """Parse code spans, raw HTML, and autolinks left to right."""
+    ranges: list[tuple[int, int, str]] = []
+    run_lengths, next_runs = _backtick_run_index(text)
+    cursor = 0
+    while cursor < len(text):
+        if _is_commonmark_escape_start(text, cursor):
+            cursor += 2
+            continue
+
+        run_length = run_lengths.get(cursor)
+        if run_length is not None:
+            close = next_runs.get(cursor)
+            if close is not None:
+                end = close + run_length
+                ranges.append((cursor, end, "code"))
+                cursor = end
+                continue
+            cursor += run_length
+            continue
+
+        if text[cursor] == "<":
+            match = next(
+                (
+                    candidate
+                    for pattern in (
+                        INLINE_HTML_TAG,
+                        INLINE_URI_AUTOLINK,
+                        INLINE_EMAIL_AUTOLINK,
+                    )
+                    if (candidate := pattern.match(text, cursor)) is not None
+                ),
+                None,
+            )
+            if match is not None:
+                ranges.append((cursor, match.end(), "html"))
+                cursor = match.end()
+                continue
+        cursor += 1
     return ranges
+
+def _inline_code_ranges(text: str) -> list[tuple[int, int]]:
+    """Return code spans from the unified single-line inline parse."""
+    return [
+        (start, end)
+        for start, end, kind in _inline_syntax_ranges(text)
+        if kind == "code"
+    ]
+
+
+def _inline_ignored_ranges(text: str) -> list[tuple[int, int]]:
+    """Return all higher-precedence inline ranges in source order."""
+    return [
+        (start, end)
+        for start, end, _kind in _inline_syntax_ranges(text)
+    ]
 
 
 def _without_inline_code(text: str) -> str:
@@ -2241,65 +2450,15 @@ def _without_inline_code(text: str) -> str:
     return "".join(visible)
 
 
-def _merge_sorted_ranges(
-    left: list[tuple[int, int]],
-    right: list[tuple[int, int]],
-) -> list[tuple[int, int]]:
-    """Merge and coalesce two range lists that are already start-sorted."""
-    merged: list[tuple[int, int]] = []
-    left_index = 0
-    right_index = 0
-    while left_index < len(left) or right_index < len(right):
-        if right_index >= len(right) or (
-            left_index < len(left)
-            and left[left_index][0] <= right[right_index][0]
-        ):
-            current = left[left_index]
-            left_index += 1
-        else:
-            current = right[right_index]
-            right_index += 1
-        if merged and current[0] <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], current[1]))
-        else:
-            merged.append(current)
-    return merged
-
-
-def _unescaped_match_ranges(
-    pattern: re.Pattern[str],
-    text: str,
-) -> list[tuple[int, int]]:
-    """Return ranges whose CommonMark opener is not backslash-escaped."""
-    return [
-        (match.start(), match.end())
-        for match in pattern.finditer(text)
-        if not _is_backslash_escaped(text, match.start())
-    ]
-
-
-def _inline_html_tag_ranges(text: str) -> list[tuple[int, int]]:
-    """Return higher-precedence inline HTML and autolink ranges."""
-    html_ranges = _unescaped_match_ranges(INLINE_HTML_TAG, text)
-    uri_ranges = _unescaped_match_ranges(INLINE_URI_AUTOLINK, text)
-    email_ranges = _unescaped_match_ranges(INLINE_EMAIL_AUTOLINK, text)
-    return _merge_sorted_ranges(
-        _merge_sorted_ranges(html_ranges, uri_ranges),
-        email_ranges,
-    )
-
-
 def _count_visible_markdown_link(lines: list[str], expected: str) -> int:
     """Count exact rendered links, excluding code, images, escapes, and tags."""
     count = 0
     for line in lines:
-        code_ranges = _inline_code_ranges(line)
-        html_ranges = _inline_html_tag_ranges(line)
+        ignored_ranges = _inline_ignored_ranges(line)
         position = line.find(expected)
         while position >= 0:
-            hidden = any(start <= position < end for start, end in code_ranges)
-            hidden = hidden or any(
-                start <= position < end for start, end in html_ranges
+            hidden = any(
+                start <= position < end for start, end in ignored_ranges
             )
             escaped = _is_backslash_escaped(line, position)
             image = (
@@ -2325,9 +2484,9 @@ COMMONMARK_REFERENCE_LABEL_MAX_LENGTH = 999
 
 
 def _markdown_reference_label(label: str) -> str:
-    """Normalize a CommonMark reference label for case-insensitive lookup."""
-    unescaped = re.sub(r"\\([^\w\s])", r"\1", label)
-    return re.sub(r"\s+", " ", unescaped).strip().casefold()
+    """Normalize a reference label without changing escaped punctuation."""
+    collapsed = re.sub(r"[ \t\r\n]+", " ", label)
+    return collapsed.strip(" \t\r\n").casefold()
 
 
 def _markdown_reference_key(
@@ -2346,33 +2505,68 @@ def _markdown_reference_key(
 
 
 def _markdown_destination_prefix(text: str) -> str | None:
-    """Extract one inline/reference destination token from the start of text."""
+    """Parse one complete same-line CommonMark reference destination."""
     candidate = text.lstrip(" \t")
     if not candidate:
         return None
+
     if candidate.startswith("<"):
         end = _find_unescaped_token(candidate, ">", 1)
-        return None if end < 0 else candidate[1:end]
-
-    cursor = 0
-    depth = 0
-    while cursor < len(candidate):
-        character = candidate[cursor]
-        if _is_commonmark_escape_start(candidate, cursor):
-            cursor += 2
-            continue
-        if character in " \t":
-            break
-        if character == "(":
-            depth += 1
-        elif character == ")":
-            if depth == 0:
+        if end < 0:
+            return None
+        destination = candidate[1:end]
+        destination_cursor = 0
+        while destination_cursor < len(destination):
+            character = destination[destination_cursor]
+            if _is_commonmark_escape_start(destination, destination_cursor):
+                destination_cursor += 2
+                continue
+            if character == "<" or ord(character) <= 0x20 or ord(character) == 0x7F:
+                return None
+            destination_cursor += 1
+        cursor = end + 1
+    else:
+        cursor = 0
+        depth = 0
+        while cursor < len(candidate):
+            character = candidate[cursor]
+            if _is_commonmark_escape_start(candidate, cursor):
+                cursor += 2
+                continue
+            if character in " \t":
                 break
-            depth -= 1
+            if ord(character) <= 0x20 or ord(character) == 0x7F:
+                return None
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            cursor += 1
+        if cursor == 0 or depth:
+            return None
+        destination = candidate[:cursor]
+
+    title_separator = cursor
+    while cursor < len(candidate) and candidate[cursor] in " \t":
         cursor += 1
-    if cursor == 0 or depth:
+    if cursor == len(candidate):
+        return destination
+    if cursor == title_separator:
         return None
-    return candidate[:cursor]
+
+    opener = candidate[cursor]
+    closer = {"\"": "\"", "'": "'", "(": ")"}.get(opener)
+    if closer is None:
+        return None
+    end = _find_unescaped_token(candidate, closer, cursor + 1)
+    if end < 0:
+        return None
+    cursor = end + 1
+    while cursor < len(candidate) and candidate[cursor] in " \t":
+        cursor += 1
+    return destination if cursor == len(candidate) else None
 
 
 def _inline_markdown_destination(
@@ -2439,10 +2633,7 @@ def _inline_markdown_destination(
 
 def _markdown_label_end_map(text: str) -> dict[int, int]:
     """Index bracket pairs, skipping higher-precedence spans, in linear time."""
-    ignored_ranges = _merge_sorted_ranges(
-        _inline_code_ranges(text),
-        _inline_html_tag_ranges(text),
-    )
+    ignored_ranges = _inline_ignored_ranges(text)
     openings: list[int] = []
     closing_by_opening: dict[int, int] = {}
     range_index = 0
@@ -2528,8 +2719,7 @@ def _count_visible_markdown_destination(
     for line_index, line in enumerate(lines):
         if line_index in definition_lines:
             continue
-        code_ranges = _inline_code_ranges(line)
-        html_ranges = _inline_html_tag_ranges(line)
+        ignored_ranges = _inline_ignored_ranges(line)
         label_ends = _markdown_label_end_map(line)
         cursor = 0
         while cursor < len(line):
@@ -2584,9 +2774,9 @@ def _count_visible_markdown_destination(
                     if resolved_image:
                         cursor = max(cursor, consumed_image)
                 continue
-            if any(left <= start < right for left, right in code_ranges):
-                continue
-            if any(left <= start < right for left, right in html_ranges):
+            if any(
+                left <= start < right for left, right in ignored_ranges
+            ):
                 continue
 
             end = label_ends.get(start)
@@ -4259,6 +4449,14 @@ def _validate_reader_rubric(root: Path, errors: list[str]) -> None:
             errors.append(
                 f"{rubric_path}: dimension {dimension!r} needs a question"
             )
+        elif (
+            question
+            != CANONICAL_READER_RUBRIC_DIMENSION_POLICY[dimension]["question"]
+        ):
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} question must "
+                "match canonical policy"
+            )
         anchors = details.get("anchors")
         if not isinstance(anchors, dict):
             errors.append(
@@ -4286,6 +4484,17 @@ def _validate_reader_rubric(root: Path, errors: list[str]) -> None:
             errors.append(
                 f"{rubric_path}: dimension {dimension!r} has empty anchors: "
                 f"{sorted(empty_anchors, key=str)}"
+            )
+        canonical_anchors = CANONICAL_READER_RUBRIC_DIMENSION_POLICY[
+            dimension
+        ]["anchors"]
+        if (
+            list(anchors) != list(canonical_anchors)
+            or anchors != canonical_anchors
+        ):
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} anchors must "
+                "match the exact ordered canonical policy"
             )
 
     scoring_rules = rubric.get("scoring_rules")

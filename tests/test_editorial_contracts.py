@@ -15,6 +15,7 @@ from validate_editorial_contracts import (  # noqa: E402
     _find_backtick_run,
     _markdown_destination_prefix,
     _markdown_label_end_map,
+    _markdown_reference_label,
     _strip_html_comments_from_line,
     validate,
 )
@@ -1184,6 +1185,123 @@ class EditorialContractTests(unittest.TestCase):
                     "scoring_rules must match the exact ordered"
                 )
                 path.write_text(original, encoding="utf-8")
+
+    def test_pins_exact_reader_rubric_dimension_policy(self) -> None:
+        path = self.fixture_root / "schemas/reader-mode-rubric.yaml"
+        original = path.read_text(encoding="utf-8")
+        questions = {
+            "orientation": (
+                "Can a first-time reader identify the project, its purpose, "
+                "status, and next path?"
+            ),
+            "technical_depth": (
+                "Can a technical reader inspect, run, test, and reason about "
+                "failure boundaries?"
+            ),
+            "conceptual_depth": (
+                "Does the documentation explain the ideas, formal choices, "
+                "genealogy, or disciplinary stakes?"
+            ),
+            "commercial_relevance": (
+                "Can an operational reader map the project to a real workflow "
+                "without unsupported claims?"
+            ),
+            "evidence": (
+                "Are claims, status, authorship, limitations, and inspection "
+                "paths auditable?"
+            ),
+            "seo_surface": (
+                "Does each legitimate search intent have a useful, "
+                "non-duplicative landing path?"
+            ),
+            "cross_linking": (
+                "Can a reader move vertically within the project and laterally "
+                "through related systems?"
+            ),
+        }
+        for dimension, question in questions.items():
+            with self.subTest(dimension=dimension, field="question"):
+                needle = f'    question: "{question}"'
+                self.assertIn(needle, original)
+                path.write_text(
+                    original.replace(
+                        needle,
+                        '    question: "Invert the canonical policy."',
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(
+                    f"dimension {dimension!r} question must match canonical policy"
+                )
+                path.write_text(original, encoding="utf-8")
+
+        zero_anchors = {
+            "orientation": "No usable root README.",
+            "technical_depth": "No technical inspection path.",
+            "conceptual_depth": "No conceptual framing.",
+            "commercial_relevance": (
+                "No user or operational problem is identified."
+            ),
+            "evidence": "Claims have no inspection path.",
+            "seo_surface": (
+                "The project is effectively undiscoverable from its "
+                "documentation."
+            ),
+            "cross_linking": "No meaningful internal or ecosystem links.",
+        }
+        for dimension, anchor_text in zero_anchors.items():
+            with self.subTest(dimension=dimension, field="anchor"):
+                needle = f'      0: "{anchor_text}"'
+                self.assertIn(needle, original)
+                path.write_text(
+                    original.replace(
+                        needle,
+                        '      0: "Grant full credit without evidence."',
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(
+                    f"dimension {dimension!r} anchors must match the exact "
+                    "ordered canonical policy"
+                )
+                path.write_text(original, encoding="utf-8")
+
+        evidence_four = (
+            '      4: "Claim references expose schema-valid postures, '
+            "assertion records expose schema-valid verification states, "
+            'and project limitations clearly bound scope."'
+        )
+        self.assertIn(evidence_four, original)
+        path.write_text(
+            original.replace(
+                evidence_four,
+                '      4: "Claims need no inspectable support."',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error(
+            "dimension 'evidence' anchors must match the exact ordered "
+            "canonical policy"
+        )
+        path.write_text(original, encoding="utf-8")
+
+        first = '      0: "No usable root README."\n'
+        second = (
+            '      1: "A title or fragment exists, but purpose and status '
+            'remain unclear."\n'
+        )
+        self.assertIn(f"{first}{second}", original)
+        path.write_text(
+            original.replace(f"{first}{second}", f"{second}{first}", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error(
+            "dimension 'orientation' anchors must match the exact ordered "
+            "canonical policy"
+        )
 
     def test_requires_exact_unique_rendered_readme_h2_sections(self) -> None:
         path = self.fixture_root / "README.md"
@@ -3308,6 +3426,15 @@ class EditorialContractTests(unittest.TestCase):
             "[Project home](<../../README.md>)",
             "[Project home][project-home]\n\n[project-home]: ../../README.md",
             (
+                r"[Project home][img\!]"
+                "\n\n"
+                r"[img\!]: ../../README.md"
+            ),
+            (
+                "![decoy [Project home](../../README.md)][img]\n\n"
+                "[img]: image.png trailing-garbage"
+            ),
+            (
                 "- Alternate route\n"
                 "    [Project home][continued-home]\n"
                 "    [continued-home]: ../../README.md"
@@ -3321,6 +3448,15 @@ class EditorialContractTests(unittest.TestCase):
             ),
             '![decoy](<image.png>"[Project home](../../README.md)")',
             "[Project `]` home](../../README.md)",
+            r"[Project \`home](../../README.md) trailing\`",
+            (
+                r'[Project <span data-note="`">home</span>]'
+                r"(../../README.md) trailing \`"
+            ),
+            (
+                r"[Project <https://example.test/`> home]"
+                r"(../../README.md) trailing \`"
+            ),
             (
                 '[Project <span data-close="]">home</span>]'
                 "(../../README.md)"
@@ -3341,6 +3477,26 @@ class EditorialContractTests(unittest.TestCase):
             "[Project home]\n\n(../../README.md)",
             '<pre>\n<a href="../../README.md">Project home</a>\n</pre>',
             "![Project image][image-home]\n\n[image-home]: ../../README.md",
+            (
+                "![Project image][image-title]\n\n"
+                '[image-title]: <../../README.md> "Canonical route"'
+            ),
+            (
+                "![Project image][image-paren-title]\n\n"
+                "[image-paren-title]: ../../README.md (Canonical route)"
+            ),
+            (
+                "![Project image][image-single-title]\n\n"
+                "[image-single-title]: ../../README.md 'Canonical route'"
+            ),
+            (
+                "[Project home][img!]\n\n"
+                r"[img\!]: ../../README.md"
+            ),
+            (
+                "[Project home][project home]\n\n"
+                "[project\u00a0home]: ../../README.md"
+            ),
             "![Project image](../../README.md)",
             r"![Project image](image\(1\).png)",
             (
@@ -3362,6 +3518,7 @@ class EditorialContractTests(unittest.TestCase):
                 '![decoy](<image.png> '
                 '"[Project home](../../README.md)")'
             ),
+            r"\\`[Project home](../../README.md)\`",
             chr(96) + "[Project home]\n(../../README.md)" + chr(96),
         )
         for candidate in nonlinks:
@@ -3370,17 +3527,61 @@ class EditorialContractTests(unittest.TestCase):
                 self.assertEqual([], validate(self.fixture_root))
                 path.write_text(original, encoding="utf-8")
 
-    def test_only_ascii_punctuation_can_be_escaped_in_destinations(
+    def test_requires_complete_reference_destinations_and_titles(
         self,
     ) -> None:
-        malformed = r"image\ [Project home](../../README.md)"
+        invalid = (
+            r"image\ [Project home](../../README.md)",
+            "image.png trailing-garbage",
+            '<image.png>"adjacent title"',
+            "<image path.png>",
+            "image\x0b.png",
+            'image.png "title" trailing-garbage',
+            'image.png "unterminated',
+        )
+        for candidate in invalid:
+            with self.subTest(candidate=candidate):
+                self.assertIsNone(_markdown_destination_prefix(candidate))
+
+        valid = (
+            (r"image\(1\).png", r"image\(1\).png"),
+            ("<image.png>", "image.png"),
+            ('image.png "A title"', "image.png"),
+            ("image.png 'A title'", "image.png"),
+            ("image.png (A title)", "image.png"),
+            ('<image.png>\t"A title"   ', "image.png"),
+        )
+        for candidate, destination in valid:
+            with self.subTest(candidate=candidate):
+                self.assertEqual(
+                    destination,
+                    _markdown_destination_prefix(candidate),
+                )
+
+    def test_reference_labels_preserve_escapes_and_non_ascii_space(
+        self,
+    ) -> None:
+        self.assertNotEqual(
+            _markdown_reference_label(r"img\!"),
+            _markdown_reference_label("img!"),
+        )
+        for whitespace in ("\u00a0", "\x0b", "\x0c"):
+            with self.subTest(whitespace=ord(whitespace)):
+                self.assertNotEqual(
+                    _markdown_reference_label(f"project{whitespace}home"),
+                    _markdown_reference_label("project home"),
+                )
         self.assertEqual(
-            "image\\",
-            _markdown_destination_prefix(malformed),
+            "project home",
+            _markdown_reference_label("  Project\t\r\nHome  "),
         )
         self.assertEqual(
-            r"image\(1\).png",
-            _markdown_destination_prefix(r"image\(1\).png"),
+            _markdown_reference_label("ẞ"),
+            _markdown_reference_label("SS"),
+        )
+        self.assertEqual(
+            _markdown_reference_label(r"img\!"),
+            _markdown_reference_label(r"IMG\!"),
         )
 
     def test_pairs_labels_across_higher_precedence_inline_ranges(self) -> None:
@@ -3388,11 +3589,13 @@ class EditorialContractTests(unittest.TestCase):
             "[Project `]` home]",
             '[Project <span data-close="]">home</span>]',
             "[Project <https://example.test/a]b> home]",
+            r'[Project <span title="`"> home] \`',
+            r"[Project <https://example.test/`> home] \`",
         )
         for label in labels:
             with self.subTest(label=label):
                 self.assertEqual(
-                    len(label) - 1,
+                    label.rfind("]"),
                     _markdown_label_end_map(label).get(0),
                 )
 
