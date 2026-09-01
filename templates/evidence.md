@@ -22,3 +22,7 @@ by `project-record.yml`, and the limitations table from the project record's
 separate `limitations` entries. The assertion schema has no per-claim limitation
 field. Audience pages may foreground different rows but may not change an
 assertion's statement, class, verification state, freshness, or evidence.
+
+## Canonical project documentation
+
+- [Canonical README](../README.md)

@@ -1115,6 +1115,39 @@ class EditorialContractTests(unittest.TestCase):
         )
         self.assert_contract_error("schema needs a nonempty description")
 
+    def test_pins_exact_reader_rubric_scoring_policy_and_order(self) -> None:
+        path = self.fixture_root / "schemas/reader-mode-rubric.yaml"
+        original = path.read_text(encoding="utf-8")
+        scoring_start = original.index("scoring_rules:\n")
+        scoring_block = original[scoring_start:]
+        first = '  - "Score only observable public documentation."\n'
+        second = (
+            '  - "Do not convert word count, badges, or keyword density '
+            'directly into quality."\n'
+        )
+        self.assertIn(f"{first}{second}", scoring_block)
+        mutations = (
+            "scoring_rules: []\n",
+            scoring_block.replace(first, "", 1),
+            scoring_block.replace(f"{first}{second}", f"{second}{first}", 1),
+            scoring_block.replace(
+                first,
+                '  - "Infer authorship and outcomes whenever useful."\n',
+                1,
+            ),
+            scoring_block.replace(first, f"{first}{first}", 1),
+        )
+        for replacement in mutations:
+            with self.subTest(replacement=replacement.splitlines()[0]):
+                path.write_text(
+                    original[:scoring_start] + replacement,
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(
+                    "scoring_rules must match the exact ordered"
+                )
+                path.write_text(original, encoding="utf-8")
+
     def test_requires_exact_unique_rendered_readme_h2_sections(self) -> None:
         path = self.fixture_root / "README.md"
         original = path.read_text(encoding="utf-8")
@@ -1247,6 +1280,40 @@ class EditorialContractTests(unittest.TestCase):
         self.assert_contract_error(
             "canonical level-one heading must be the sole document title"
         )
+
+    def test_requires_root_readme_canonical_h1_first_and_solo(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        canonical = "# editorial-standards"
+        self.assertTrue(original.startswith(f"{canonical}\n"))
+        mutations = (
+            original.replace(f"{canonical}\n", "", 1),
+            original.replace(canonical, "# Unrelated project", 1),
+            f"Visible preface.\n\n{original}",
+            f"<p>Visible preface.</p>\n\n{original}",
+            f"\n{original}",
+            original + "\n# Duplicate project title\n",
+            original + "\nDuplicate project title\n=======================\n",
+            original + "\n- # Nested duplicate project title\n",
+            original + "\nParagraph <h1>Duplicate project title</h1>\n",
+            original.replace(
+                canonical,
+                f"<!--\n{canonical}\n-->",
+                1,
+            ),
+            original.replace(
+                canonical,
+                f"```markdown\n{canonical}\n```",
+                1,
+            ),
+        )
+        for attacked in mutations:
+            with self.subTest(prefix=attacked[:40]):
+                path.write_text(attacked, encoding="utf-8")
+                self.assert_contract_error(
+                    "canonical level-one heading"
+                )
+                path.write_text(original, encoding="utf-8")
 
     def test_ignores_fake_development_commands_inside_raw_html(self) -> None:
         path = self.fixture_root / "README.md"
@@ -2292,6 +2359,40 @@ class EditorialContractTests(unittest.TestCase):
         )
         self.assert_contract_error("missing required template marker")
 
+    def test_pins_exact_deprecated_category_migrations(self) -> None:
+        path = self.fixture_root / "schemas/category-taxonomy.yaml"
+        original = path.read_text(encoding="utf-8")
+        migration_start = original.index("deprecated_categories:\n")
+        migration_block = original[migration_start:]
+        subsidiary = '  subsidiary: "case-study"\n'
+        governance = '  governance-practice: "meta-system"\n'
+        self.assertIn(subsidiary, migration_block)
+        mutations = (
+            "deprecated_categories: {}\n",
+            migration_block.replace(subsidiary, "", 1),
+            migration_block.replace(
+                subsidiary,
+                '  subsidiary: "guide"\n',
+                1,
+            ),
+            migration_block + '  unreviewed-category: "guide"\n',
+            migration_block.replace(
+                governance,
+                '  historical-governance: "meta-system"\n',
+                1,
+            ),
+        )
+        for replacement in mutations:
+            with self.subTest(replacement=replacement.splitlines()[0]):
+                path.write_text(
+                    original[:migration_start] + replacement,
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(
+                    "deprecated category migration map must be exactly"
+                )
+                path.write_text(original, encoding="utf-8")
+
     def test_rejects_missing_or_hidden_publication_template_bodies(self) -> None:
         publication_templates = (
             "case-study.md",
@@ -3042,6 +3143,54 @@ class EditorialContractTests(unittest.TestCase):
         )
         self.assert_contract_error("fields cannot be both required and optional")
 
+    def test_pins_complete_log_field_inventories_and_order(self) -> None:
+        schema_path = self.fixture_root / "schemas/log-schema.yaml"
+        template_path = self.fixture_root / "templates/log.md"
+        schema = schema_path.read_text(encoding="utf-8")
+        template = template_path.read_text(encoding="utf-8")
+        activity_start = schema.index("  activity:\n")
+        organs_start = schema.index("  organs_touched:\n", activity_start)
+        activity_block = schema[activity_start:organs_start]
+        links_start = schema.index("  links:\n", organs_start)
+        organs_block = schema[organs_start:links_start]
+        mood_start = schema.index("  mood:\n")
+        optional_start = schema.index("optional_fields:\n")
+        mood_block = schema[mood_start:optional_start]
+
+        optional_mutations = (
+            schema.replace(activity_block, "", 1),
+            schema.replace("  activity:\n", "  generated_activity:\n", 1),
+            schema.replace(
+                "optional_fields:\n",
+                "optional_fields:\n  unreviewed:\n"
+                "    type: string\n"
+                '    description: "Unreviewed field."\n',
+                1,
+            ),
+            schema.replace(
+                f"{activity_block}{organs_block}",
+                f"{organs_block}{activity_block}",
+                1,
+            ),
+        )
+        for attacked in optional_mutations:
+            with self.subTest(scope="optional"):
+                schema_path.write_text(attacked, encoding="utf-8")
+                self.assert_contract_error("optional field inventory/order mismatch")
+                schema_path.write_text(schema, encoding="utf-8")
+
+        schema_path.write_text(
+            schema.replace(mood_block, "", 1),
+            encoding="utf-8",
+        )
+        template_path.write_text(
+            template.replace("mood: focused\n", "", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("required field inventory/order mismatch")
+        schema_path.write_text(schema, encoding="utf-8")
+        template_path.write_text(template, encoding="utf-8")
+
     def test_rejects_any_audience_template_without_canonical_project_link(self) -> None:
         link = "[Canonical README](../../README.md)"
         audience_templates = (
@@ -3063,6 +3212,56 @@ class EditorialContractTests(unittest.TestCase):
                     f"templates/audiences/{filename}: missing canonical project link"
                 )
                 path.write_text(content, encoding="utf-8")
+
+                path.write_text(
+                    content.replace(
+                        f"- {link}\n",
+                        f"- {link}\n- {link}\n",
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("duplicate canonical project link")
+                path.write_text(content, encoding="utf-8")
+
+                for visible_duplicate in (
+                    f"See {link} for the same destination.",
+                    f"> {link}",
+                    f"- Outer route\n  - {link}",
+                ):
+                    with self.subTest(
+                        filename=filename,
+                        visible_duplicate=visible_duplicate,
+                    ):
+                        path.write_text(
+                            content + f"\n{visible_duplicate}\n",
+                            encoding="utf-8",
+                        )
+                        self.assert_contract_error(
+                            "duplicate canonical project link"
+                        )
+                        path.write_text(content, encoding="utf-8")
+
+    def test_requires_exact_visible_evidence_template_canonical_link(self) -> None:
+        path = self.fixture_root / "templates/evidence.md"
+        original = path.read_text(encoding="utf-8")
+        link = "- [Canonical README](../README.md)"
+        self.assertEqual(1, original.splitlines().count(link))
+        mutations = (
+            original.replace(f"{link}\n", "", 1),
+            original.replace("../README.md", "../missing.md", 1),
+            original.replace(link, f"<!--\n{link}\n-->", 1),
+            original.replace(link, f"```markdown\n{link}\n```", 1),
+            original.replace(link, f"{link}\n{link}", 1),
+            original + f"\nSee {link} for the same destination.\n",
+            original + f"\n> {link}\n",
+            original + f"\n- Outer route\n  - {link}\n",
+        )
+        for attacked in mutations:
+            with self.subTest(mutation=attacked[-100:]):
+                path.write_text(attacked, encoding="utf-8")
+                self.assert_contract_error("canonical project link")
+                path.write_text(original, encoding="utf-8")
 
     def test_rejects_missing_reader_template_structure(self) -> None:
         required_markers = {

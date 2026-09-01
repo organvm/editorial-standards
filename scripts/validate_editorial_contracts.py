@@ -72,6 +72,32 @@ CANONICAL_SUBSCRIPTIONS = [
         "action": "Validate published essay against quality rubric",
     }
 ]
+CANONICAL_LOG_REQUIRED_FIELDS = (
+    "layout",
+    "title",
+    "date",
+    "tags",
+    "mood",
+)
+CANONICAL_LOG_OPTIONAL_FIELDS = (
+    "activity",
+    "organs_touched",
+    "links",
+    "references",
+)
+CANONICAL_DEPRECATED_CATEGORIES = {
+    "subsidiary": "case-study",
+    "governance-practice": "meta-system",
+    "product-update": "case-study",
+    "reflection": "retrospective",
+}
+CANONICAL_READER_RUBRIC_SCORING_RULES = (
+    "Score only observable public documentation.",
+    "Do not convert word count, badges, or keyword density directly into quality.",
+    "A proposed application cannot satisfy deployment or outcome evidence.",
+    "Record unknowns; do not infer authorship, adoption, or business results.",
+    "Use the same rubric across classes, but rank conversion priority within class.",
+)
 CANONICAL_AGENT_SUBSCRIPTION_LINES = tuple(
     f"- Event: `{subscription['event']}` → Action: {subscription['action']}"
     for subscription in CANONICAL_SUBSCRIPTIONS
@@ -735,7 +761,12 @@ AUDIENCE_TEMPLATES = {
     for path in READER_MODE_TEMPLATES
     if path.parent == Path("templates/audiences")
 }
+CANONICAL_ROOT_README_H1 = "# editorial-standards"
 CANONICAL_README_LINK = "[Canonical README](../../README.md)"
+CANONICAL_PROJECT_LINKS = {
+    **{path: CANONICAL_README_LINK for path in AUDIENCE_TEMPLATES},
+    Path("templates/evidence.md"): "[Canonical README](../README.md)",
+}
 REQUIRED_READER_MARKERS = {
     Path("templates/repository-readme-v2.md"): (
         "# [Project name]",
@@ -757,6 +788,8 @@ REQUIRED_READER_MARKERS = {
         "| ID | Claim | Claim posture | Assertion class | Verification state | Evidence | Freshness |",
         "## Project limitations",
         "| ID | Limitation | Related assertion |",
+        "## Canonical project documentation",
+        "- [Canonical README](../README.md)",
     ),
     Path("templates/audiences/business.md"): (
         "# [Project]: operational edition",
@@ -1782,6 +1815,18 @@ def _validate_log_template(root: Path, errors: list[str]) -> None:
         "schemas/log-schema.yaml: optional_fields",
         errors,
     )
+    if tuple(required) != CANONICAL_LOG_REQUIRED_FIELDS:
+        errors.append(
+            "schemas/log-schema.yaml: required field inventory/order mismatch: "
+            f"expected={list(CANONICAL_LOG_REQUIRED_FIELDS)}, "
+            f"actual={list(required)}"
+        )
+    if tuple(optional) != CANONICAL_LOG_OPTIONAL_FIELDS:
+        errors.append(
+            "schemas/log-schema.yaml: optional field inventory/order mismatch: "
+            f"expected={list(CANONICAL_LOG_OPTIONAL_FIELDS)}, "
+            f"actual={list(optional)}"
+        )
     frontmatter = _string_keyed_mapping(
         frontmatter,
         "templates/log.md: frontmatter",
@@ -2936,6 +2981,11 @@ def _validate_readme(
         return
     raw_readme = readme_path.read_text(encoding="utf-8")
     raw_lines = raw_readme.splitlines()
+    if not raw_lines or raw_lines[0] != CANONICAL_ROOT_README_H1:
+        errors.append(
+            "README.md: canonical level-one heading must be the exact first "
+            f"source line: {CANONICAL_ROOT_README_H1!r}"
+        )
     raw_development_headings = [
         index for index, line in enumerate(raw_lines) if line == "## Development"
     ]
@@ -2984,6 +3034,12 @@ def _validate_readme(
                 break
     rendered_lines, fenced_blocks = _markdown_contract_view(
         Path("README.md"), raw_readme, errors
+    )
+    _validate_reader_structure(
+        Path("README.md"),
+        rendered_lines,
+        (CANONICAL_ROOT_README_H1,),
+        errors,
     )
     rendered_readme = "\n".join(rendered_lines)
     required_fields = set(required_map)
@@ -3742,16 +3798,11 @@ def _validate_category_taxonomy(
             )
 
     deprecated = taxonomy.get("deprecated_categories")
-    if not isinstance(deprecated, dict) or any(
-        not isinstance(source, str)
-        or not isinstance(target, str)
-        or source in frontmatter_categories
-        or target not in frontmatter_categories
-        for source, target in (deprecated.items() if isinstance(deprecated, dict) else ())
-    ):
+    if deprecated != CANONICAL_DEPRECATED_CATEGORIES:
         errors.append(
-            "schemas/category-taxonomy.yaml: deprecated categories must map "
-            "noncanonical names to canonical categories"
+            "schemas/category-taxonomy.yaml: deprecated category migration map "
+            f"must be exactly {CANONICAL_DEPRECATED_CATEGORIES!r}; "
+            f"found {deprecated!r}"
         )
 
 
@@ -3830,10 +3881,11 @@ def _validate_reader_rubric(root: Path, errors: list[str]) -> None:
             )
 
     scoring_rules = rubric.get("scoring_rules")
-    if not isinstance(scoring_rules, list) or not scoring_rules or not all(
-        isinstance(rule, str) and rule.strip() for rule in scoring_rules
-    ):
-        errors.append(f"{rubric_path}: scoring_rules must be nonempty strings")
+    if scoring_rules != list(CANONICAL_READER_RUBRIC_SCORING_RULES):
+        errors.append(
+            f"{rubric_path}: scoring_rules must match the exact ordered "
+            "evidence-bounded policy"
+        )
 
 
 def _validate_quality_rubric(root: Path, errors: list[str]) -> None:
@@ -4354,13 +4406,26 @@ def validate(root: Path) -> list[str]:
             REQUIRED_READER_MARKERS.get(relative_path, ()),
             errors,
         )
-        if (
-            relative_path in AUDIENCE_TEMPLATES
-            and f"- {CANONICAL_README_LINK}" not in content_lines
+        canonical_project_link = CANONICAL_PROJECT_LINKS.get(relative_path)
+        if canonical_project_link is not None:
+            rendered_link = f"- {canonical_project_link}"
+            canonical_line_occurrences = content_lines.count(rendered_link)
+            visible_link_occurrences = _count_visible_markdown_link(
+                content_lines,
+                canonical_project_link,
+            )
+        else:
+            canonical_line_occurrences = 0
+            visible_link_occurrences = 0
+        if canonical_project_link is not None and (
+            canonical_line_occurrences != 1 or visible_link_occurrences != 1
         ):
             errors.append(
-                f"{relative_path}: missing canonical project link "
-                f"{CANONICAL_README_LINK!r}"
+                f"{relative_path}: missing canonical project link or duplicate "
+                "canonical project link; expected exactly once: "
+                f"{canonical_project_link!r}; canonical_lines="
+                f"{canonical_line_occurrences}, visible_links="
+                f"{visible_link_occurrences}"
             )
 
     return errors
