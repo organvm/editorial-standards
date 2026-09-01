@@ -65,14 +65,83 @@ class EditorialContractTests(unittest.TestCase):
 
         self.assert_contract_error("outside the schema enum")
 
-    def test_rejects_evaluator_template_without_canonical_project_link(self) -> None:
-        path = self.fixture_root / "templates/audiences/evaluator.md"
+    def test_rejects_any_audience_template_without_canonical_project_link(self) -> None:
         link = "[Canonical README](../../README.md)"
-        content = path.read_text(encoding="utf-8")
-        self.assertIn(link, content)
-        path.write_text(content.replace(f"- {link}\n", "", 1), encoding="utf-8")
+        audience_templates = (
+            "business.md",
+            "evaluator.md",
+            "general.md",
+            "humanities.md",
+            "technical.md",
+        )
+        for filename in audience_templates:
+            with self.subTest(filename=filename):
+                path = self.fixture_root / "templates/audiences" / filename
+                content = path.read_text(encoding="utf-8")
+                self.assertIn(link, content)
+                path.write_text(
+                    content.replace(f"- {link}\n", "", 1), encoding="utf-8"
+                )
+                self.assert_contract_error(
+                    f"templates/audiences/{filename}: missing canonical project link"
+                )
+                path.write_text(content, encoding="utf-8")
 
-        self.assert_contract_error("missing canonical project link")
+    def test_rejects_missing_reader_template_structure(self) -> None:
+        required_markers = {
+            "templates/repository-readme-v2.md": "| I am reading as… | Start here |",
+            "templates/evidence.md": "## Project limitations",
+            "templates/audiences/business.md": "## Current deployment status",
+            "templates/audiences/evaluator.md": "## Evidence for each material claim",
+            "templates/audiences/general.md": "## What exists now",
+            "templates/audiences/humanities.md": "## Ethical tensions",
+            "templates/audiences/technical.md": "## Tests and verification",
+        }
+        for relative_path, marker in required_markers.items():
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                content = path.read_text(encoding="utf-8")
+                self.assertIn(marker, content)
+                path.write_text(
+                    content.replace(marker, f"Removed {marker}", 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(
+                    f"{relative_path}: missing required template marker {marker!r}"
+                )
+                path.write_text(content, encoding="utf-8")
+
+    def test_rejects_scalar_instead_of_essay_list(self) -> None:
+        path = self.fixture_root / "templates/guide.md"
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("tags: [guide]", content)
+        path.write_text(
+            content.replace("tags: [guide]", "tags: guide", 1), encoding="utf-8"
+        )
+
+        self.assert_contract_error("field 'tags' must have type 'list'")
+
+    def test_rejects_string_instead_of_essay_integer(self) -> None:
+        path = self.fixture_root / "templates/guide.md"
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("word_count: 0", content)
+        path.write_text(
+            content.replace("word_count: 0", 'word_count: "0"', 1),
+            encoding="utf-8",
+        )
+
+        self.assert_contract_error("field 'word_count' must have type 'integer'")
+
+    def test_rejects_string_instead_of_essay_list(self) -> None:
+        path = self.fixture_root / "templates/guide.md"
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("references: []", content)
+        path.write_text(
+            content.replace("references: []", 'references: ""', 1),
+            encoding="utf-8",
+        )
+
+        self.assert_contract_error("field 'references' must have type 'list'")
 
 
 if __name__ == "__main__":

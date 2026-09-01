@@ -28,8 +28,88 @@ READER_MODE_TEMPLATES = {
     Path("templates/audiences/humanities.md"),
     Path("templates/audiences/technical.md"),
 }
-EVALUATOR_TEMPLATE = Path("templates/audiences/evaluator.md")
+AUDIENCE_TEMPLATES = {
+    path
+    for path in READER_MODE_TEMPLATES
+    if path.parent == Path("templates/audiences")
+}
 CANONICAL_README_LINK = "[Canonical README](../../README.md)"
+REQUIRED_READER_MARKERS = {
+    Path("templates/repository-readme-v2.md"): (
+        "# [Project name]",
+        "## What am I looking at?",
+        "## Choose your reading path",
+        "| I am reading as… | Start here |",
+        "## Project at a glance",
+        "## Canonical project documentation",
+    ),
+    Path("templates/evidence.md"): (
+        "# [Project]: evidence record",
+        "## Assertion evidence",
+        "| ID | Claim | Claim posture | Assertion class | Verification state | Evidence | Freshness |",
+        "## Project limitations",
+        "| ID | Limitation | Related assertion |",
+    ),
+    Path("templates/audiences/business.md"): (
+        "# [Project]: operational edition",
+        "## Existing operational problem",
+        "## Who experiences it",
+        "## Current workaround",
+        "## Changed workflow",
+        "## Inputs and outputs",
+        "## Integration requirements",
+        "## Risks and constraints",
+        "## Current deployment status",
+        "## Evidence versus projected value",
+        "## Technical appendix and evidence",
+    ),
+    Path("templates/audiences/evaluator.md"): (
+        "# [Project]: contribution and evaluation record",
+        "## Initial condition",
+        "## Anthony's role",
+        "## Personally designed or implemented",
+        "## What changed",
+        "## Evidence for each material claim",
+        "## Incomplete work and known limits",
+        "## Collaborative, generated, inherited, or externally supplied work",
+        "## Inspection map",
+    ),
+    Path("templates/audiences/general.md"): (
+        "# [Project]: a two-minute explanation",
+        "## What is this?",
+        "## What problem led to it?",
+        "## What happens when someone uses it?",
+        "## A concrete example",
+        "## Why it matters",
+        "## What exists now",
+        "## Where to go next",
+    ),
+    Path("templates/audiences/humanities.md"): (
+        "# [Project]: humanities edition",
+        "## Central question",
+        "## Intellectual and artistic genealogy",
+        "## Medium and formal choices",
+        "## Authorship, agency, and interpretation",
+        "## Cultural and institutional context",
+        "## Ethical tensions",
+        "## How computation changes the question",
+        "## Further reading and evidence",
+    ),
+    Path("templates/audiences/technical.md"): (
+        "# [Project]: technical edition",
+        "## Implementation status",
+        "## System architecture",
+        "## Components and boundaries",
+        "## Data flow and interfaces",
+        "## Dependencies and requirements",
+        "## Install and run",
+        "## Tests and verification",
+        "## Observability and failure modes",
+        "## Security and human-approval boundaries",
+        "## Known technical debt",
+        "## Inspection paths",
+    ),
+}
 
 
 def _load_yaml(path: Path, errors: list[str]) -> Any:
@@ -72,6 +152,37 @@ def _matches_type(value: Any, expected: str) -> bool:
     if expected == "object":
         return isinstance(value, dict)
     return False
+
+
+def _validate_declared_type(
+    value: Any,
+    rules: dict[str, Any],
+    path: Path,
+    field: str,
+    errors: list[str],
+) -> None:
+    """Validate template structure without applying publish-time value bounds."""
+    expected_type = rules.get("type")
+    if not isinstance(expected_type, str) or not _matches_type(value, expected_type):
+        errors.append(f"{path}: field {field!r} must have type {expected_type!r}")
+        return
+
+    if expected_type == "list":
+        item_type = rules.get("item_type")
+        for index, item in enumerate(value):
+            if item_type and not _matches_type(item, item_type):
+                errors.append(
+                    f"{path}: field {field}[{index}] must have type {item_type!r}"
+                )
+    elif expected_type == "object":
+        properties = rules.get("properties", {})
+        if isinstance(properties, dict):
+            for key in sorted(set(value) & set(properties)):
+                child_rules = properties[key]
+                if isinstance(child_rules, dict):
+                    _validate_declared_type(
+                        value[key], child_rules, path, f"{field}.{key}", errors
+                    )
 
 
 def _validate_schema_value(
@@ -290,6 +401,14 @@ def validate(root: Path) -> list[str]:
     unclassified = sorted(discovered - declared)
     if unclassified:
         errors.append(f"unclassified template files: {list(map(str, unclassified))}")
+    marker_contract_gap = sorted(
+        READER_MODE_TEMPLATES ^ set(REQUIRED_READER_MARKERS)
+    )
+    if marker_contract_gap:
+        errors.append(
+            "reader-mode marker contracts do not match declared templates: "
+            f"{list(map(str, marker_contract_gap))}"
+        )
 
     frontmatters: dict[Path, dict[str, Any]] = {}
     for relative_path in sorted(PUBLICATION_TEMPLATES):
@@ -323,6 +442,15 @@ def validate(root: Path) -> list[str]:
             errors.append(f"{path}: missing required frontmatter fields: {missing}")
         if unknown:
             errors.append(f"{path}: unknown frontmatter fields: {unknown}")
+        for field in sorted(fields & allowed_fields):
+            rules = required_map.get(field, optional_map.get(field))
+            if not isinstance(rules, dict):
+                errors.append(
+                    f"schemas/frontmatter-schema.yaml: rules for {field!r} "
+                    "are not a mapping"
+                )
+                continue
+            _validate_declared_type(frontmatter[field], rules, path, field, errors)
         for field, expected in {"layout": "essay", "category": expected_category}.items():
             actual = frontmatter.get(field)
             if actual != expected:
@@ -380,7 +508,16 @@ def validate(root: Path) -> list[str]:
         content = path.read_text(encoding="utf-8")
         if not content.lstrip().startswith("# "):
             errors.append(f"{relative_path}: must start with a level-one heading")
-        if relative_path == EVALUATOR_TEMPLATE and CANONICAL_README_LINK not in content:
+        content_lines = content.splitlines()
+        for marker in REQUIRED_READER_MARKERS.get(relative_path, ()):
+            if marker not in content_lines:
+                errors.append(
+                    f"{relative_path}: missing required template marker {marker!r}"
+                )
+        if (
+            relative_path in AUDIENCE_TEMPLATES
+            and f"- {CANONICAL_README_LINK}" not in content_lines
+        ):
             errors.append(
                 f"{relative_path}: missing canonical project link "
                 f"{CANONICAL_README_LINK!r}"
