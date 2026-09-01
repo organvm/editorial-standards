@@ -2330,15 +2330,21 @@ def _inline_markdown_destination(
             return None
         destination = line[start:cursor]
 
+    title_separated = False
     while cursor < len(line) and line[cursor] in " \t":
+        title_separated = True
         cursor += 1
     if cursor < len(line) and line[cursor] in {'"', "'"}:
+        if not title_separated:
+            return None
         quote = line[cursor]
         end = _find_unescaped_token(line, quote, cursor + 1)
         if end < 0:
             return None
         cursor = end + 1
     elif cursor < len(line) and line[cursor] == "(":
+        if not title_separated:
+            return None
         end = _find_unescaped_token(line, ")", cursor + 1)
         if end < 0:
             return None
@@ -2350,23 +2356,22 @@ def _inline_markdown_destination(
     return destination, cursor + 1
 
 
-def _find_markdown_label_end(text: str, opening_bracket: int) -> int:
-    """Find a balanced, unescaped closing bracket for one link label."""
-    depth = 0
-    cursor = opening_bracket + 1
+def _markdown_label_end_map(text: str) -> dict[int, int]:
+    """Index balanced, unescaped bracket pairs in one linear pass."""
+    openings: list[int] = []
+    closing_by_opening: dict[int, int] = {}
+    cursor = 0
     while cursor < len(text):
         character = text[cursor]
         if character == "\\" and cursor + 1 < len(text):
             cursor += 2
             continue
         if character == "[":
-            depth += 1
-        elif character == "]":
-            if depth == 0:
-                return cursor
-            depth -= 1
+            openings.append(cursor)
+        elif character == "]" and openings:
+            closing_by_opening[openings.pop()] = cursor
         cursor += 1
-    return -1
+    return closing_by_opening
 
 
 def _normalize_markdown_destination(destination: str) -> str:
@@ -2424,6 +2429,7 @@ def _count_visible_markdown_destination(
             continue
         code_ranges = _inline_code_ranges(line)
         html_ranges = _inline_html_tag_ranges(line)
+        label_ends = _markdown_label_end_map(line)
         cursor = 0
         while cursor < len(line):
             start = line.find("[", cursor)
@@ -2437,27 +2443,42 @@ def _count_visible_markdown_destination(
                 and line[start - 1] == "!"
                 and not _is_backslash_escaped(line, start - 1)
             ):
-                image_end = _find_markdown_label_end(line, start)
-                if image_end >= 0:
+                image_end = label_ends.get(start)
+                if image_end is not None:
+                    image_label = line[start + 1 : image_end]
                     suffix = image_end + 1
+                    consumed_image = suffix
+                    resolved_image = False
                     if suffix < len(line) and line[suffix] == "(":
                         parsed_image = _inline_markdown_destination(line, suffix)
                         if parsed_image is not None:
-                            cursor = max(cursor, parsed_image[1])
+                            _, consumed_image = parsed_image
+                            resolved_image = True
                     elif suffix < len(line) and line[suffix] == "[":
-                        reference_end = _find_markdown_label_end(line, suffix)
-                        if reference_end >= 0:
-                            cursor = max(cursor, reference_end + 1)
-                    else:
-                        cursor = max(cursor, image_end + 1)
+                        reference_end = label_ends.get(suffix)
+                        if reference_end is not None:
+                            reference = line[suffix + 1 : reference_end]
+                            key = _markdown_reference_label(
+                                reference or image_label
+                            )
+                            if key in definitions:
+                                consumed_image = reference_end + 1
+                                resolved_image = True
+                    elif (
+                        _markdown_reference_label(image_label) in definitions
+                    ):
+                        consumed_image = image_end + 1
+                        resolved_image = True
+                    if resolved_image:
+                        cursor = max(cursor, consumed_image)
                 continue
             if any(left <= start < right for left, right in code_ranges):
                 continue
             if any(left <= start < right for left, right in html_ranges):
                 continue
 
-            end = _find_markdown_label_end(line, start)
-            if end < 0:
+            end = label_ends.get(start)
+            if end is None:
                 continue
             label = line[start + 1 : end]
             after = end + 1
@@ -2469,8 +2490,8 @@ def _count_visible_markdown_destination(
                 if parsed is not None:
                     destination, consumed = parsed
             elif after < len(line) and line[after] == "[":
-                reference_end = _find_markdown_label_end(line, after)
-                if reference_end >= 0:
+                reference_end = label_ends.get(after)
+                if reference_end is not None:
                     reference = line[after + 1 : reference_end]
                     key = _markdown_reference_label(reference or label)
                     destination = definitions.get(key)

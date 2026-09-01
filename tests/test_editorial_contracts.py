@@ -3312,6 +3312,12 @@ class EditorialContractTests(unittest.TestCase):
             ),
             "[Project home](../../README.md/)",
             r"[Project home](..\..\README.md)",
+            "![decoy [Project home](../../README.md)]",
+            (
+                "![decoy [Project home](../../README.md)]"
+                "[missing-image]"
+            ),
+            '![decoy](<image.png>"[Project home](../../README.md)")',
         )
         for route in duplicate_routes:
             with self.subTest(route=route):
@@ -3328,6 +3334,25 @@ class EditorialContractTests(unittest.TestCase):
             '<pre>\n<a href="../../README.md">Project home</a>\n</pre>',
             "![Project image][image-home]\n\n[image-home]: ../../README.md",
             "![Project image](../../README.md)",
+            (
+                "![decoy [Project home](../../README.md)](image.png)"
+            ),
+            (
+                "![decoy [Project home](../../README.md)][image-home]"
+                "\n\n[image-home]: image.png"
+            ),
+            (
+                "![Project image][]"
+                "\n\n[Project image]: ../../README.md"
+            ),
+            (
+                "![Project image]"
+                "\n\n[Project image]: ../../README.md"
+            ),
+            (
+                '![decoy](<image.png> '
+                '"[Project home](../../README.md)")'
+            ),
             chr(96) + "[Project home]\n(../../README.md)" + chr(96),
         )
         for candidate in nonlinks:
@@ -3335,6 +3360,16 @@ class EditorialContractTests(unittest.TestCase):
                 path.write_text(original + f"\n{candidate}\n", encoding="utf-8")
                 self.assertEqual([], validate(self.fixture_root))
                 path.write_text(original, encoding="utf-8")
+
+    def test_handles_many_unmatched_image_openers_in_one_pass(self) -> None:
+        path = self.fixture_root / "templates/audiences/general.md"
+        original = path.read_text(encoding="utf-8")
+        path.write_text(
+            original + "\n" + ("![" * 10_000) + "\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual([], validate(self.fixture_root))
 
     def test_rejects_missing_reader_template_structure(self) -> None:
         required_markers = {
