@@ -40,7 +40,7 @@ Class controls documentation breadth. It is not a prestige grade.
 | B — Major project | Substantial project with two or three real audiences | README v2, 2–3 audience editions, evidence record, project record |
 | C — Supporting component | Library, service, schema, or infrastructure component | Technical README/edition, status, interfaces, evidence, project record |
 | D — Deployment artifact | Player, compiled build, mirror, or delivery shell | Minimal use-oriented README, canonical-project redirect, status |
-| E — Research/theory | Scholarship, artistic research, or conceptual corpus | Scholarly-first README/edition, sources, provenance, project record |
+| E — Research/theory | Scholarship, artistic research, or conceptual corpus | Scholarly-first README/edition, sources, provenance, evidence record, project record |
 | F — Archive/reference | Superseded or preserved material | Archive notice, provenance, immutable status, correct redirect |
 
 Classify by the repository's actual function. Do not inflate a deployment shell
