@@ -11,6 +11,45 @@ from typing import Any
 import yaml
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that fails closed when a mapping repeats a key."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyLoader,
+    node: yaml.nodes.MappingNode,
+    deep: bool = False,
+) -> dict[Any, Any]:
+    loader.flatten_mapping(node)
+    mapping: dict[Any, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as exc:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                "found an unhashable mapping key",
+                key_node.start_mark,
+            ) from exc
+        if duplicate:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
+
+
 CANONICAL_ORGANIZATION = "organvm"
 CANONICAL_REPOSITORY = "editorial-standards"
 CANONICAL_IDENTITY_LINES = {
@@ -254,6 +293,13 @@ QUALITY_RUBRIC_README_HEADINGS = (
     "### Portfolio Relevance (20 points)",
     "### Scoring Guidelines",
 )
+QUALITY_RUBRIC_README_TITLES = {
+    "clarity": "Clarity",
+    "accuracy": "Accuracy",
+    "insight_density": "Insight Density",
+    "cross_referencing": "Cross-Referencing",
+    "portfolio_relevance": "Portfolio Relevance",
+}
 CATEGORY_README_HEADINGS = (
     "### Meta-System Essay",
     "### Case Study",
@@ -447,6 +493,41 @@ REQUIRED_READER_TABLE_ROW_LABELS = {
         ("ID", "Limitation", "Related assertion"),
     ): ("[limitation-id]",),
 }
+REQUIRED_READER_TABLE_ROWS = {
+    (
+        Path("templates/evidence.md"),
+        (
+            "ID",
+            "Claim",
+            "Claim posture",
+            "Assertion class",
+            "Verification state",
+            "Evidence",
+            "Freshness",
+        ),
+    ): (
+        (
+            "[claim-id]",
+            "[Bounded factual claim]",
+            "[implemented / partial / proposed / unknown / contradicted]",
+            "[external_fact / operator_directive / current_state / inference / "
+            "historical_record / ratified_axiom]",
+            "[unverified / verified / stale / disputed]",
+            "[Inspectable reference and digest]",
+            "[fresh / stale / not_applicable, when required]",
+        ),
+    ),
+    (
+        Path("templates/evidence.md"),
+        ("ID", "Limitation", "Related assertion"),
+    ): (
+        (
+            "[limitation-id]",
+            "[Material boundary from project-record.yml]",
+            "[Optional assertion_ref]",
+        ),
+    ),
+}
 REQUIRED_READER_TABLE_SECTIONS = {
     (
         Path("docs/reader-mode-documentation.md"),
@@ -498,7 +579,10 @@ RELATED_REPOSITORY_PATTERN = (
 
 def _load_yaml(path: Path, errors: list[str]) -> Any:
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return yaml.load(
+            path.read_text(encoding="utf-8"),
+            Loader=_UniqueKeyLoader,
+        )
     except (OSError, yaml.YAMLError) as exc:
         errors.append(f"{path}: invalid YAML: {exc}")
         return None
@@ -530,7 +614,7 @@ def _frontmatter(path: Path, errors: list[str]) -> dict[str, Any] | None:
         )
         return None
     try:
-        data = yaml.safe_load("\n".join(sections[0]))
+        data = yaml.load("\n".join(sections[0]), Loader=_UniqueKeyLoader)
     except yaml.YAMLError as exc:
         errors.append(f"{path}: invalid frontmatter YAML: {exc}")
         return None
@@ -569,13 +653,16 @@ def _matches_pattern(
         return None
 
 
-def _validate_frontmatter_rule_definition(
+def _validate_rule_definition(
+    schema_path: Path,
     field: str,
     rules: Any,
     errors: list[str],
+    *,
+    require_description: bool = True,
 ) -> None:
     """Validate every schema rule, even when no template instantiates the field."""
-    context = f"schemas/frontmatter-schema.yaml: rules for {field!r}"
+    context = f"{schema_path}: rules for {field!r}"
     if not isinstance(rules, dict):
         errors.append(f"{context} are not a mapping")
         return
@@ -602,8 +689,12 @@ def _validate_frontmatter_rule_definition(
         )
 
     description = rules.get("description")
-    if not isinstance(description, str) or not description.strip():
+    if require_description and (
+        not isinstance(description, str) or not description.strip()
+    ):
         errors.append(f"{context} need a nonempty description")
+    elif description is not None and not isinstance(description, str):
+        errors.append(f"{context} description must be a string")
 
     enum = rules.get("enum")
     if enum is not None:
@@ -671,8 +762,12 @@ def _validate_frontmatter_rule_definition(
             errors.append(f"{context} properties must be a mapping")
         else:
             for child_field, child_rules in properties.items():
-                _validate_frontmatter_rule_definition(
-                    f"{field}.{child_field}", child_rules, errors
+                _validate_rule_definition(
+                    schema_path,
+                    f"{field}.{child_field}",
+                    child_rules,
+                    errors,
+                    require_description=False,
                 )
         if not isinstance(required_keys, list) or not all(
             isinstance(key, str) for key in required_keys
@@ -685,6 +780,19 @@ def _validate_frontmatter_rule_definition(
                     f"{context} required_keys reference unknown properties: "
                     f"{unknown_required}"
                 )
+
+
+def _validate_frontmatter_rule_definition(
+    field: str,
+    rules: Any,
+    errors: list[str],
+) -> None:
+    _validate_rule_definition(
+        Path("schemas/frontmatter-schema.yaml"),
+        field,
+        rules,
+        errors,
+    )
 
 
 def _validate_declared_type(
@@ -834,12 +942,30 @@ def _validate_log_template(root: Path, errors: list[str]) -> None:
         errors.append("schemas/log-schema.yaml: fields must be YAML mappings")
         return
 
+    definition_error_count = len(errors)
+    duplicate_schema_fields = sorted(set(required) & set(optional))
+    if duplicate_schema_fields:
+        errors.append(
+            "schemas/log-schema.yaml: fields cannot be both required and optional: "
+            f"{duplicate_schema_fields}"
+        )
+    for field, rules in (*required.items(), *optional.items()):
+        _validate_rule_definition(
+            Path("schemas/log-schema.yaml"),
+            field,
+            rules,
+            errors,
+        )
+
     missing = sorted(set(required) - set(frontmatter))
     unknown = sorted(set(frontmatter) - set(required) - set(optional))
     if missing:
         errors.append(f"templates/log.md: missing required log fields: {missing}")
     if unknown:
         errors.append(f"templates/log.md: unknown log fields: {unknown}")
+
+    if len(errors) != definition_error_count:
+        return
 
     for field in sorted(set(frontmatter) & (set(required) | set(optional))):
         rules = required.get(field, optional.get(field))
@@ -949,6 +1075,24 @@ RAW_HTML_GENERIC_START = re.compile(
 )
 
 
+def _is_backslash_escaped(text: str, index: int) -> bool:
+    """Return whether the character at index has an odd backslash prefix."""
+    backslashes = 0
+    index -= 1
+    while index >= 0 and text[index] == "\\":
+        backslashes += 1
+        index -= 1
+    return backslashes % 2 == 1
+
+
+def _find_unescaped_token(text: str, token: str, start: int) -> int:
+    """Locate a CommonMark token whose first character is not escaped."""
+    position = text.find(token, start)
+    while position >= 0 and _is_backslash_escaped(text, position):
+        position = text.find(token, position + len(token))
+    return position
+
+
 def _strip_html_comments_from_line(
     line: str,
     in_comment: bool,
@@ -964,8 +1108,8 @@ def _strip_html_comments_from_line(
             in_comment = False
             cursor = end + 3
             continue
-        comment_start = line.find("<!--", cursor)
-        code_start = line.find("`", cursor)
+        comment_start = _find_unescaped_token(line, "<!--", cursor)
+        code_start = _find_unescaped_token(line, "`", cursor)
         if code_start >= 0 and (comment_start < 0 or code_start < comment_start):
             code_length = len(line[code_start:]) - len(line[code_start:].lstrip("`"))
             code_end = line.find("`", code_start + code_length)
@@ -1246,6 +1390,15 @@ def _validate_required_reader_table(
                 f"{empty_labels}"
             )
 
+    required_rows = REQUIRED_READER_TABLE_ROWS.get((path, header))
+    if required_rows is not None:
+        actual_rows = tuple(tuple(row) for row in data_rows)
+        if actual_rows != required_rows:
+            errors.append(
+                f"{path}: required table {label!r} canonical rows mismatch: "
+                f"expected={list(required_rows)}, actual={list(actual_rows)}"
+            )
+
 
 def _validate_reader_structure(
     path: Path,
@@ -1458,6 +1611,7 @@ def _validate_readme(
             QUALITY_RUBRIC_README_HEADINGS,
             errors,
         )
+        _validate_quality_rubric_readme(root, rendered_readme, errors)
 
     section_parts = rendered_readme.split("## Frontmatter Schema", 1)
     if len(section_parts) != 2:
@@ -1759,7 +1913,10 @@ def _validate_reader_rubric(root: Path, errors: list[str]) -> None:
 
     scale = rubric.get("scale")
     expected_scale = {"minimum": 0, "maximum": 4}
-    if scale != expected_scale:
+    scale_values_are_integers = isinstance(scale, dict) and all(
+        type(value) is int for value in scale.values()
+    )
+    if not scale_values_are_integers or scale != expected_scale:
         errors.append(
             f"{rubric_path}: expected scoring scale {expected_scale}, found {scale!r}"
         )
@@ -1793,7 +1950,13 @@ def _validate_reader_rubric(root: Path, errors: list[str]) -> None:
                 f"{rubric_path}: dimension {dimension!r} anchors must be a mapping"
             )
             continue
-        if set(anchors) != READER_RUBRIC_ANCHORS:
+        anchor_keys_are_integers = all(type(anchor) is int for anchor in anchors)
+        if not anchor_keys_are_integers:
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} anchor keys must be "
+                "integers (booleans are invalid)"
+            )
+        elif set(anchors) != READER_RUBRIC_ANCHORS:
             errors.append(
                 f"{rubric_path}: dimension {dimension!r} anchor set mismatch: "
                 f"expected={sorted(READER_RUBRIC_ANCHORS)}, "
@@ -1863,7 +2026,13 @@ def _validate_quality_rubric(root: Path, errors: list[str]) -> None:
                 f"{rubric_path}: dimension {dimension!r} scoring must be a mapping"
             )
             continue
-        if set(scoring) != QUALITY_RUBRIC_ANCHORS:
+        anchor_keys_are_integers = all(type(anchor) is int for anchor in scoring)
+        if not anchor_keys_are_integers:
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} scoring anchor keys "
+                "must be integers (booleans are invalid)"
+            )
+        elif set(scoring) != QUALITY_RUBRIC_ANCHORS:
             errors.append(
                 f"{rubric_path}: dimension {dimension!r} scoring anchors mismatch: "
                 f"expected={sorted(QUALITY_RUBRIC_ANCHORS)}, "
@@ -1891,6 +2060,69 @@ def _validate_quality_rubric(root: Path, errors: list[str]) -> None:
             f"expected={QUALITY_RUBRIC_THRESHOLDS}, "
             f"actual={rubric.get('thresholds')!r}"
         )
+
+
+def _validate_quality_rubric_readme(
+    root: Path,
+    rendered_readme: str,
+    errors: list[str],
+) -> None:
+    """Bind every rendered README score band to its machine-readable anchor."""
+    rubric_path = Path("schemas/quality-rubric.yaml")
+    rubric = _load_yaml(root / rubric_path, errors)
+    dimensions = rubric.get("dimensions") if isinstance(rubric, dict) else None
+    if not isinstance(dimensions, dict):
+        return
+
+    for dimension in QUALITY_RUBRIC_DIMENSIONS:
+        title = QUALITY_RUBRIC_README_TITLES[dimension]
+        details = dimensions.get(dimension)
+        if not isinstance(details, dict):
+            continue
+        max_points = details.get("max_points")
+        scoring = details.get("scoring")
+        if (
+            type(max_points) is not int
+            or not isinstance(scoring, dict)
+            or not all(type(anchor) is int for anchor in scoring)
+            or set(scoring) != QUALITY_RUBRIC_ANCHORS
+        ):
+            continue
+
+        heading = f"### {title} ({max_points} points)"
+        heading_parts = rendered_readme.split(heading)
+        if len(heading_parts) != 2:
+            errors.append(
+                f"README.md: quality rubric heading {heading!r} must appear "
+                "exactly once"
+            )
+            continue
+        section_lines = heading_parts[1].split("\n### ", 1)[0].splitlines()
+        actual_bands = tuple(
+            line
+            for line in section_lines
+            if re.fullmatch(r"- \*\*(?:0|\d+-\d+):\*\* .+", line)
+        )
+
+        anchors = sorted(scoring)
+        expected_bands: list[str] = []
+        for index, anchor in reversed(list(enumerate(anchors))):
+            description = scoring[anchor]
+            if not isinstance(description, str) or not description.strip():
+                expected_bands = []
+                break
+            if anchor == 0:
+                label = "0"
+            else:
+                label = f"{anchors[index - 1] + 1}-{anchor}"
+            expected_bands.append(f"- **{label}:** {description}")
+
+        if expected_bands and actual_bands != tuple(expected_bands):
+            errors.append(
+                f"README.md: quality rubric bands for {dimension!r} do not "
+                f"match {rubric_path}: expected={expected_bands}, "
+                f"actual={list(actual_bands)}"
+            )
 
 
 def _validate_repository_identity(root: Path, errors: list[str]) -> None:

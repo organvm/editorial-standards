@@ -144,19 +144,21 @@ The rubric has five dimensions, each worth 20 points:
 
 How easily can the reader understand the essay on first read? Clarity scores assess sentence structure, paragraph organization, jargon management, and logical flow. A 20/20 clarity score means a competent reader outside the author's specific domain can follow the argument without re-reading.
 
-- **16-20:** Clear, well-organized, minimal jargon or jargon well-defined.
+- **16-20:** Clear, well-organized, with minimal jargon or jargon well-defined.
 - **11-15:** Generally clear with occasional dense passages.
-- **6-10:** Requires significant effort to follow; restructuring needed.
-- **1-5:** Unclear; major rewrite required.
+- **6-10:** Requires significant effort to follow; restructuring is needed.
+- **1-5:** Unclear and in need of a major rewrite.
+- **0:** No comprehensible argument or usable structure.
 
 ### Accuracy (20 points)
 
 Are the claims correct? Are the technical details right? Accuracy scores assess factual correctness, proper use of terminology, and whether code samples, configuration examples, or system descriptions match the actual implementation.
 
-- **16-20:** All claims verifiable; technical details correct.
-- **11-15:** Minor inaccuracies that do not affect the argument.
-- **6-10:** Contains errors that could mislead the reader.
-- **1-5:** Fundamentally inaccurate; requires fact-checking pass.
+- **16-20:** All claims are verifiable and technical details are correct.
+- **11-15:** Minor inaccuracies do not affect the argument.
+- **6-10:** Errors could mislead the reader and require correction.
+- **1-5:** The central account is fundamentally inaccurate.
+- **0:** Claims are contradicted by the available evidence.
 
 ### Insight Density (20 points)
 
@@ -164,26 +166,29 @@ Does the essay reward the reader's time? Insight density measures the ratio of n
 
 - **16-20:** Nearly every paragraph offers something new or useful.
 - **11-15:** Strong core insights with some padding.
-- **6-10:** Insight buried under excessive context or repetition.
-- **1-5:** Little new information; could be reduced to a fraction of its length.
+- **6-10:** Useful insight is buried under context or repetition.
+- **1-5:** Little new information; the essay could be substantially shorter.
+- **0:** No material insight beyond generic or repeated statements.
 
 ### Cross-Referencing (20 points)
 
 Does the essay connect to the broader system? Cross-referencing scores assess how well the essay links to other organs, repos, essays, and system concepts. ORGAN-V writing does not exist in isolation — it exists to document a system, and that system context must be present.
 
 - **16-20:** Rich, meaningful connections to other system components.
-- **11-15:** Some cross-references; could be better integrated.
-- **6-10:** Minimal system context; reads as standalone.
-- **1-5:** No cross-references; disconnected from the system.
+- **11-15:** Relevant cross-references exist but could be integrated more deeply.
+- **6-10:** System context is present but sparse or weakly connected.
+- **1-5:** Minimal system context; the essay reads mostly as standalone.
+- **0:** No meaningful cross-references or system context.
 
 ### Portfolio Relevance (20 points)
 
 Does this essay belong in the public process? Portfolio relevance assesses whether the essay contributes to the system's public narrative. It asks: if someone is reading the public-process collection to understand this system, does this essay help? Or is it internal documentation that does not serve an external reader?
 
 - **16-20:** Essential reading for understanding the system.
-- **11-15:** Useful but not critical; adds depth.
-- **6-10:** Marginal relevance; might be better as internal documentation.
-- **1-5:** Does not belong in the public collection.
+- **11-15:** Useful but not critical; it adds meaningful depth.
+- **6-10:** Marginal public relevance; internal documentation may be a better fit.
+- **1-5:** The connection to the public collection is weak.
+- **0:** The essay does not serve the public-process collection.
 
 ### Scoring Guidelines
 

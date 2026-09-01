@@ -392,6 +392,37 @@ class EditorialContractTests(unittest.TestCase):
         self.assert_contract_error("row labels/order mismatch")
         path.write_text(original, encoding="utf-8")
 
+    def test_pins_every_evidence_and_limitation_placeholder_cell(self) -> None:
+        path = self.fixture_root / "templates/evidence.md"
+        original = path.read_text(encoding="utf-8")
+        rows = (
+            next(
+                line
+                for line in original.splitlines()
+                if line.startswith("| [claim-id] |")
+            ),
+            next(
+                line
+                for line in original.splitlines()
+                if line.startswith("| [limitation-id] |")
+            ),
+        )
+        for row in rows:
+            cells = [cell.strip() for cell in row[1:-1].split("|")]
+            for index in range(len(cells)):
+                with self.subTest(row=cells[0], column=index):
+                    mutated_cells = cells.copy()
+                    mutated_cells[index] = f"[noncanonical-{index}]"
+                    mutated_row = "| " + " | ".join(mutated_cells) + " |"
+                    path.write_text(
+                        original.replace(row, mutated_row, 1), encoding="utf-8"
+                    )
+                    self.assert_contract_error("canonical rows mismatch")
+                path.write_text(
+                    original,
+                    encoding="utf-8",
+                )
+
     def test_requires_every_at_a_glance_row_contiguously(self) -> None:
         path = self.fixture_root / "templates/repository-readme-v2.md"
         original = path.read_text(encoding="utf-8")
@@ -727,6 +758,27 @@ class EditorialContractTests(unittest.TestCase):
             self.assertEqual([], validate(self.fixture_root))
             path.write_text(original, encoding="utf-8")
 
+    def test_escaped_backtick_cannot_hide_an_html_comment_opener(self) -> None:
+        path = self.fixture_root / "templates/audiences/general.md"
+        original = path.read_text(encoding="utf-8")
+        lines = original.splitlines()
+        self.assertTrue(lines[0].startswith("# "))
+        hidden = "\n".join(
+            (
+                lines[0],
+                "",
+                r"\`<!--`",
+                *lines[1:],
+                "-->",
+                "",
+            )
+        )
+        path.write_text(hidden, encoding="utf-8")
+
+        errors = validate(self.fixture_root)
+        self.assertTrue(any("missing required template marker" in e for e in errors))
+        self.assertTrue(any("missing canonical project link" in e for e in errors))
+
     def test_rejects_reader_contracts_hidden_in_raw_html_blocks(self) -> None:
         path = self.fixture_root / "templates/audiences/general.md"
         original = path.read_text(encoding="utf-8")
@@ -857,6 +909,44 @@ class EditorialContractTests(unittest.TestCase):
                 self.assert_contract_error("requires standalone '---' delimiters")
             path.write_text(original, encoding="utf-8")
 
+    def test_rejects_duplicate_publication_frontmatter_keys(self) -> None:
+        publication_templates = (
+            "case-study.md",
+            "guide.md",
+            "log.md",
+            "meta-system.md",
+            "methodology.md",
+            "retrospective.md",
+        )
+        for filename in publication_templates:
+            with self.subTest(filename=filename):
+                path = self.fixture_root / "templates" / filename
+                original = path.read_text(encoding="utf-8")
+                title_line = next(
+                    line for line in original.splitlines() if line.startswith("title:")
+                )
+                path.write_text(
+                    original.replace(
+                        f"{title_line}\n",
+                        f"{title_line}\ntitle: duplicate key must fail\n",
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("found duplicate key 'title'")
+
+        schema_path = self.fixture_root / "schemas/log-schema.yaml"
+        schema = schema_path.read_text(encoding="utf-8")
+        schema_path.write_text(
+            schema.replace(
+                'schema_version: "1.0"\n',
+                'schema_version: "1.0"\nschema_version: "2.0"\n',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("found duplicate key 'schema_version'")
+
     def test_rejects_incomplete_reader_rubric_contract(self) -> None:
         path = self.fixture_root / "schemas/reader-mode-rubric.yaml"
         original = path.read_text(encoding="utf-8")
@@ -880,6 +970,38 @@ class EditorialContractTests(unittest.TestCase):
         )
         for current, replacement, expected_error in mutations:
             with self.subTest(replacement=replacement):
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error(expected_error)
+                path.write_text(original, encoding="utf-8")
+
+    def test_rejects_boolean_reader_and_quality_rubric_anchor_keys(self) -> None:
+        mutations = (
+            (
+                "schemas/reader-mode-rubric.yaml",
+                "  minimum: 0",
+                "  minimum: false",
+                "expected scoring scale",
+            ),
+            (
+                "schemas/reader-mode-rubric.yaml",
+                '      0: "No usable root README."',
+                '      false: "No usable root README."',
+                "anchor keys must be integers",
+            ),
+            (
+                "schemas/quality-rubric.yaml",
+                '      0: "No comprehensible argument or usable structure."',
+                '      false: "No comprehensible argument or usable structure."',
+                "scoring anchor keys must be integers",
+            ),
+        )
+        for relative_path, current, replacement, expected_error in mutations:
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
                 self.assertIn(current, original)
                 path.write_text(
                     original.replace(current, replacement, 1), encoding="utf-8"
@@ -953,6 +1075,51 @@ class EditorialContractTests(unittest.TestCase):
 
         self.assert_contract_error("missing required template marker")
 
+    def test_binds_every_readme_quality_band_to_the_quality_schema(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        clarity_bands = (
+            "- **16-20:** Clear, well-organized, with minimal jargon or jargon "
+            "well-defined.\n"
+            "- **11-15:** Generally clear with occasional dense passages.\n"
+            "- **6-10:** Requires significant effort to follow; restructuring is "
+            "needed.\n"
+            "- **1-5:** Unclear and in need of a major rewrite.\n"
+            "- **0:** No comprehensible argument or usable structure."
+        )
+        self.assertIn(clarity_bands, original)
+        mutations = (
+            (clarity_bands, ""),
+            ("- **16-20:**", "- **17-20:**"),
+            (
+                "Clear, well-organized, with minimal jargon or jargon well-defined.",
+                "Looks polished.",
+            ),
+            (
+                "- **0:** No comprehensible argument or usable structure.",
+                "",
+            ),
+        )
+        for current, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("quality rubric bands for 'clarity'")
+                path.write_text(original, encoding="utf-8")
+
+        schema_path = self.fixture_root / "schemas/quality-rubric.yaml"
+        schema = schema_path.read_text(encoding="utf-8")
+        schema_path.write_text(
+            schema.replace(
+                "Generally clear with occasional dense passages.",
+                "Clear enough after one revision.",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("quality rubric bands for 'clarity'")
+
     def test_reports_malformed_related_repository_pattern(self) -> None:
         path = self.fixture_root / "schemas/frontmatter-schema.yaml"
         original = path.read_text(encoding="utf-8")
@@ -986,6 +1153,46 @@ class EditorialContractTests(unittest.TestCase):
         )
 
         self.assert_contract_error("outside the schema enum")
+
+    def test_validates_every_log_schema_rule_without_template_usage(self) -> None:
+        path = self.fixture_root / "schemas/log-schema.yaml"
+        original = path.read_text(encoding="utf-8")
+        mutations = (
+            (
+                "        min: 0\n",
+                "        min: invalid\n",
+                "min must be a nonnegative integer",
+            ),
+            (
+                "  links:\n    type: list\n    item_type: string\n",
+                "  links:\n    type: list\n    item_type: boolean\n",
+                "declare unsupported item_type 'boolean'",
+            ),
+            (
+                "  references:\n    type: list\n",
+                "  references:\n    type: list\n    min_length: 1\n",
+                "contain unsupported keys for 'list'",
+            ),
+        )
+        for current, replacement, expected_error in mutations:
+            with self.subTest(replacement=replacement):
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error(expected_error)
+                path.write_text(original, encoding="utf-8")
+
+        path.write_text(
+            original.replace(
+                "optional_fields:\n",
+                "optional_fields:\n  title:\n    type: string\n"
+                "    description: duplicate scope\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("fields cannot be both required and optional")
 
     def test_rejects_any_audience_template_without_canonical_project_link(self) -> None:
         link = "[Canonical README](../../README.md)"
