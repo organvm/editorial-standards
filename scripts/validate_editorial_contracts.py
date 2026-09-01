@@ -2519,16 +2519,28 @@ def _count_visible_html_anchor_destination(
     text: str,
     expected: str,
     syntax_ranges: list[tuple[int, int, str]],
+    suppressed_ranges: list[tuple[int, int]],
 ) -> int:
     """Count canonical hrefs from complete visible raw HTML anchors."""
     count = 0
+    suppressed_index = 0
     for start, end, kind in syntax_ranges:
         if kind != "html":
             continue
         destination = _html_anchor_destination(text[start:end])
         if (
-            destination is not None
-            and _normalize_markdown_destination(destination) == expected
+            destination is None
+            or _normalize_markdown_destination(destination) != expected
+        ):
+            continue
+        while (
+            suppressed_index < len(suppressed_ranges)
+            and suppressed_ranges[suppressed_index][1] <= start
+        ):
+            suppressed_index += 1
+        if (
+            suppressed_index >= len(suppressed_ranges)
+            or suppressed_ranges[suppressed_index][0] > start
         ):
             count += 1
     return count
@@ -2866,11 +2878,7 @@ def _count_visible_markdown_destination(
         ignored_ranges = [
             (start, end) for start, end, _kind in syntax_ranges
         ]
-        count += _count_visible_html_anchor_destination(
-            line,
-            expected,
-            syntax_ranges,
-        )
+        suppressed_html_ranges: list[tuple[int, int]] = []
         label_ends = _markdown_label_end_map(line, ignored_ranges)
         ignored_range_index = 0
         cursor = 0
@@ -2934,6 +2942,9 @@ def _count_visible_markdown_destination(
                             consumed_image = image_end + 1
                             resolved_image = True
                     if resolved_image:
+                        suppressed_html_ranges.append(
+                            (start, consumed_image)
+                        )
                         cursor = max(cursor, consumed_image)
                 continue
             end = label_ends.get(start)
@@ -2947,6 +2958,7 @@ def _count_visible_markdown_destination(
                 parsed = _inline_markdown_destination(line, after)
                 if parsed is not None:
                     destination, consumed = parsed
+                    suppressed_html_ranges.append((after, consumed))
             elif after < len(line) and line[after] == "[":
                 reference_end = label_ends.get(after)
                 if reference_end is not None:
@@ -2970,6 +2982,12 @@ def _count_visible_markdown_destination(
                 if _normalize_markdown_destination(destination) == expected:
                     count += 1
                 cursor = max(cursor, consumed)
+        count += _count_visible_html_anchor_destination(
+            line,
+            expected,
+            syntax_ranges,
+            suppressed_html_ranges,
+        )
     return count
 
 

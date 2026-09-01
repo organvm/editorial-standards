@@ -3485,6 +3485,10 @@ class EditorialContractTests(unittest.TestCase):
                 '<a href="../../README.md" href="elsewhere.md">'
                 "Project home</a>"
             ),
+            (
+                '![decoy <a href="../../README.md">]'
+                "[missing-image-anchor]"
+            ),
             "[Project home](../../README&#46;md)",
             "Visible <?probe [Project home](../../README.md)>",
             "Visible <!DECL [Project home](../../README.md)",
@@ -3535,6 +3539,25 @@ class EditorialContractTests(unittest.TestCase):
             ),
             r'\<a href="../../README.md">Project home</a>',
             '<a data-href="../../README.md">Project home</a>',
+            '![decoy <a href="../../README.md">](image.png)',
+            (
+                '![decoy <a href="../../README.md">]'
+                "[image-anchor]\n\n"
+                "[image-anchor]: image.png"
+            ),
+            (
+                '![decoy](image.png '
+                '"<a href=\'../../README.md\'>")'
+            ),
+            (
+                '[Other](elsewhere.md '
+                '"<a href=\'../../README.md\'>")'
+            ),
+            (
+                "![decoy][image-title-anchor]\n\n"
+                "[image-title-anchor]: image.png "
+                '"<a href=\'../../README.md\'>"'
+            ),
             (
                 '<a href="elsewhere.md" href="../../README.md">'
                 "Project home</a>"
