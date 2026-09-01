@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -53,6 +54,10 @@ _UniqueKeyLoader.add_constructor(
 
 CANONICAL_ORGANIZATION = "organvm"
 CANONICAL_REPOSITORY = "editorial-standards"
+CANONICAL_SCHEMA_MERGE_SHA = "2c2b7c8b0e841a4abde82230be88524d43f9b3c2"
+CANONICAL_LICENSE_SHA256 = (
+    "65bfcf3e7864ed904700d0f80159399d07faf071600c194f0c9152d653012f3d"
+)
 CANONICAL_SCHEMA_DEPENDENCY = {
     "type": "schema",
     "source": "organvm-iv-taxis/schema-definitions",
@@ -60,8 +65,67 @@ CANONICAL_SCHEMA_DEPENDENCY = {
         "Consumes the canonical project-record and assertion-evidence schemas"
     ),
 }
+CANONICAL_PRODUCTION_EDGES = [
+    {
+        "type": "editorial-governance",
+        "format": "markdown",
+        "consumers": [
+            {
+                "organ": "ORGAN-V",
+                "repos": ["essay-pipeline", "public-process"],
+                "relationship": "governs",
+            }
+        ],
+    },
+    {
+        "type": "frontmatter-schema",
+        "format": "yaml",
+        "consumers": [
+            {
+                "organ": "ORGAN-V",
+                "repos": ["essay-pipeline"],
+                "relationship": "defines-schema-for",
+            }
+        ],
+    },
+    {
+        "type": "essay-templates",
+        "format": "markdown",
+        "consumers": [
+            {
+                "organ": "ORGAN-V",
+                "repos": ["public-process"],
+                "relationship": "provides-templates-for",
+            }
+        ],
+    },
+]
+CANONICAL_REGISTRY_ENTRY = {
+    "repo": "organvm/editorial-standards",
+    "tier": "ranked",
+    "discovered": "2026-06-22",
+    "value_thesis": (
+        "Only repo in the estate expressing documentation quality as a "
+        "machine-readable, versioned contract (6 YAML schemas + 100-point "
+        "rubric + 6 publication templates), already consumed by essay-pipeline "
+        "and public-process. Highest latent value: a reusable docs-quality "
+        "standard the whole eight-organ estate could adopt once enforcement "
+        "is co-located with the schema."
+    ),
+    "first_task": (
+        "Ship a standalone, dependency-light frontmatter + quality validator "
+        "(validate.py CLI + reusable GitHub composite action) that reads "
+        "schemas/frontmatter-schema.yaml, building on the README/template parity "
+        "already enforced in CI, so any estate repo can gate its docs on the "
+        "same contract."
+    ),
+    "discovery_doc": "DISCOVERY.md",
+}
 CANONICAL_IDENTITY_LINES = {
     Path("AGENTS.md"): (
+        "- **Produce** `editorial-governance` for ORGAN-V",
+        "- **Produce** `frontmatter-schema` for ORGAN-V",
+        "- **Produce** `essay-templates` for ORGAN-V",
         "- **Consume** `schema` from "
         "[`organvm-iv-taxis/schema-definitions`]"
         "(../../organvm-iv-taxis/schema-definitions/CLAUDE.md)",
@@ -72,6 +136,9 @@ CANONICAL_IDENTITY_LINES = {
     ),
     Path("CLAUDE.md"): (
         "**Org:** `organvm` | **Repo:** `editorial-standards`",
+        "- **Produces** → `ORGAN-V`: editorial-governance",
+        "- **Produces** → `ORGAN-V`: frontmatter-schema",
+        "- **Produces** → `ORGAN-V`: essay-templates",
         "- **Consumes** ← `organvm-iv-taxis/schema-definitions`: schema",
     ),
     Path("DISCOVERY.md"): (
@@ -79,6 +146,9 @@ CANONICAL_IDENTITY_LINES = {
     ),
     Path("GEMINI.md"): (
         "**Org:** `organvm` | **Repo:** `editorial-standards`",
+        "- **Produces** → `ORGAN-V`: editorial-governance",
+        "- **Produces** → `ORGAN-V`: frontmatter-schema",
+        "- **Produces** → `ORGAN-V`: essay-templates",
         "- **Consumes** ← `organvm-iv-taxis/schema-definitions`: schema",
     ),
     Path("ecosystem.yaml"): (
@@ -106,11 +176,11 @@ CANONICAL_IDENTITY_LINES = {
     ),
 }
 IDENTITY_LINE_PREFIXES = {
-    Path("AGENTS.md"): ("- **Consume** `schema` from ",),
+    Path("AGENTS.md"): ("- **Produce** ", "- **Consume** `schema` from "),
     Path("CHANGELOG.md"): ("[Unreleased]:", "[0.1.0]:"),
-    Path("CLAUDE.md"): ("**Org:**", "- **Consumes** ← "),
+    Path("CLAUDE.md"): ("**Org:**", "- **Produces** → ", "- **Consumes** ← "),
     Path("DISCOVERY.md"): ("# Discovery:",),
-    Path("GEMINI.md"): ("**Org:**", "- **Consumes** ← "),
+    Path("GEMINI.md"): ("**Org:**", "- **Produces** → ", "- **Consumes** ← "),
     Path("ecosystem.yaml"): ("repo:", "organ:"),
     Path("README.md"): (
         "[![ORGAN-V: Logos]",
@@ -132,16 +202,134 @@ REQUIRED_SCHEMA_FILES = {
     Path("schemas/reader-mode-rubric.yaml"),
     Path("schemas/tag-governance.yaml"),
 }
+REQUIRED_CLAIM_BOUNDARY_POLICIES = {
+    Path("docs/reader-mode-documentation.md"): {
+        "## Decision": (
+            "Audience pages may change order, terminology, examples, assumed "
+            "knowledge, and the evidence they foreground. They may not silently "
+            "change those facts.",
+        ),
+    },
+    Path("templates/evidence.md"): {
+        "## Project limitations": (
+            "Audience pages may foreground different rows but may not change an "
+            "assertion's statement, class, verification state, freshness, or evidence.",
+        ),
+    },
+}
+FORBIDDEN_CLAIM_BOUNDARY_POLICIES = {
+    Path("docs/reader-mode-documentation.md"): {
+        "## Decision": (
+            "They may silently change those facts.",
+            "Audience pages may silently change those facts.",
+        ),
+    },
+    Path("templates/evidence.md"): {
+        "## Project limitations": (
+            "Audience pages may change an assertion's statement, class, "
+            "verification state, freshness, or evidence.",
+            "They may change an assertion's statement, class, verification "
+            "state, freshness, or evidence.",
+        ),
+    },
+}
+REQUIRED_CLAIM_BOUNDARY_LINE_SEQUENCES = {
+    Path("docs/reader-mode-documentation.md"): {
+        "## Decision": (
+            "Audience pages may change order, terminology, examples, assumed knowledge, and",
+            "the evidence they foreground. They may not silently change those facts.",
+        ),
+    },
+    Path("templates/evidence.md"): {
+        "## Project limitations": (
+            "field. Audience pages may foreground different rows but may not change an",
+            "assertion's statement, class, verification state, freshness, or evidence.",
+        ),
+    },
+}
+CANONICAL_SCHEMA_LINKS = {
+    Path("README.md"): {
+        "## Reader-mode repository documentation": (
+            "[canonical project-record example](https://github.com/"
+            "organvm-iv-taxis/schema-definitions/blob/"
+            f"{CANONICAL_SCHEMA_MERGE_SHA}/examples/project-record-v1-example.yaml)",
+            "[project-record schema](https://github.com/"
+            "organvm-iv-taxis/schema-definitions/blob/"
+            f"{CANONICAL_SCHEMA_MERGE_SHA}/schemas/project-record-v1.schema.json)",
+        ),
+    },
+    Path("docs/reader-mode-documentation.md"): {
+        "## Canonical project record": (
+            "[`project-record-v1.schema.json`](https://github.com/"
+            "organvm-iv-taxis/schema-definitions/blob/"
+            f"{CANONICAL_SCHEMA_MERGE_SHA}/schemas/project-record-v1.schema.json)",
+            "[`assertion-evidence.v1`](https://github.com/"
+            "organvm-iv-taxis/schema-definitions/blob/"
+            f"{CANONICAL_SCHEMA_MERGE_SHA}/schemas/assertion-evidence.v1.schema.json)",
+        ),
+    },
+}
+CANONICAL_SCHEMA_LINK_LINE_SEQUENCES = {
+    Path("README.md"): {
+        "## Reader-mode repository documentation": (
+            "Start with the [canonical project-record example](https://github.com/"
+            "organvm-iv-taxis/schema-definitions/blob/"
+            f"{CANONICAL_SCHEMA_MERGE_SHA}/examples/project-record-v1-example.yaml),",
+            "[README v2 template](templates/repository-readme-v2.md), and",
+            "[project-record schema](https://github.com/"
+            "organvm-iv-taxis/schema-definitions/blob/"
+            f"{CANONICAL_SCHEMA_MERGE_SHA}/schemas/project-record-v1.schema.json).",
+        ),
+    },
+    Path("docs/reader-mode-documentation.md"): {
+        "## Canonical project record": (
+            "`project-record.yml` is the shared factual substrate. It is validated by the",
+            "canonical",
+            "[`project-record-v1.schema.json`](https://github.com/"
+            "organvm-iv-taxis/schema-definitions/blob/"
+            f"{CANONICAL_SCHEMA_MERGE_SHA}/schemas/project-record-v1.schema.json)",
+            "contract. Material claims resolve to separate",
+            "[`assertion-evidence.v1`](https://github.com/"
+            "organvm-iv-taxis/schema-definitions/blob/"
+            f"{CANONICAL_SCHEMA_MERGE_SHA}/schemas/assertion-evidence.v1.schema.json)",
+            "records rather than duplicating mutable claim text and verification state.",
+        ),
+    },
+}
+REQUIRED_CI_REQUIREMENTS = """PyYAML==6.0.3 \\
+    --hash=sha256:7f047e29dcae44602496db43be01ad42fc6f1cc0d8cd6c83d342306c32270196 \\
+    --hash=sha256:fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0 \\
+    --hash=sha256:9149cad251584d5fb4981be1ecde53a1ca46c891a79788c0df828d2f166bda28 \\
+    --hash=sha256:5fdec68f91a0c6739b380c83b951e2c72ac0197ace422360e6d5a959d8d97b2c \\
+    --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc \\
+    --hash=sha256:8dc52c23056b9ddd46818a57b78404882310fb473d63f17b07d5c40421e47f8e \\
+    --hash=sha256:41715c910c881bc081f1e8872880d3c650acf13dfa8214bad49ed4cede7c34ea \\
+    --hash=sha256:96b533f0e99f6579b3d4d4995707cf36df9100d67e0c8303a0c55b27b5f99bc5 \\
+    --hash=sha256:5fcd34e47f6e0b794d17de1b4ff496c00986e1c83f7ab2fb8fcfe9616ff7477b \\
+    --hash=sha256:64386e5e707d03a7e172c0701abfb7e10f0fb753ee1d773128192742712a98fd
+"""
+REQUIRED_CI_INSTALL_COMMAND = (
+    "python3 -m pip install --require-hashes --only-binary=:all: "
+    "-r requirements-ci.txt"
+)
 REQUIRED_LOCAL_CI_PREREQUISITES = ("Python 3.12", "PyYAML")
 REQUIRED_LOCAL_CI_COMMANDS = (
-    "python3 -m pip install pyyaml",
+    REQUIRED_CI_INSTALL_COMMAND,
     'python3 -c "',
     "for f in glob.glob('schemas/*.yaml'):",
     "python3 scripts/validate_editorial_contracts.py",
     "python3 -m unittest discover -s tests -v",
-    'test -f "README.md" && echo "::notice::README.md found" || exit 1',
-    'test -f "LICENSE" && echo "::notice::License file found" || exit 1',
-    'test -f "docs/reader-mode-documentation.md" && echo '
+    'test -f "README.md" && ! test -L "README.md" && echo '
+    '"::notice::README.md found" || exit 1',
+    'test -f "LICENSE" && ! test -L "LICENSE" && test -s "LICENSE" && '
+    'python3 -c "import hashlib,pathlib,sys; p=pathlib.Path(\'LICENSE\'); '
+    "sys.exit(0 if hashlib.sha256(p.read_bytes()).hexdigest() == "
+    f"'{CANONICAL_LICENSE_SHA256}' else 1)\" && echo "
+    '"::notice::License file found" || exit 1',
+    'test -f "requirements-ci.txt" && ! test -L "requirements-ci.txt" && echo '
+    '"::notice::CI requirements lock found" || exit 1',
+    'test -f "docs/reader-mode-documentation.md" && '
+    '! test -L "docs/reader-mode-documentation.md" && echo '
     '"::notice::Reader-mode standard found" || exit 1',
     "python3 -m py_compile scripts/validate_editorial_contracts.py tests/test_editorial_contracts.py",
     "git diff --check",
@@ -157,6 +345,8 @@ REQUIRED_HOSTED_CI_COMMAND_STEPS = (
     ),
 )
 REQUIRED_HOSTED_CI_RUNNER = "ubuntu-latest"
+REQUIRED_HOSTED_CI_NAME = "Editorial Standards CI"
+REQUIRED_HOSTED_CI_PERMISSIONS = {"contents": "read"}
 REQUIRED_HOSTED_CI_JOB_KEYS = {"runs-on", "steps"}
 REQUIRED_HOSTED_CI_STEP_NAMES = (
     "Checkout code",
@@ -211,16 +401,108 @@ REQUIRED_YAML_VALIDATION_COMMAND = "\n".join(
 )
 REQUIRED_STRUCTURE_VALIDATION_COMMAND = "\n".join(
     (
-        'test -f "README.md" && echo "::notice::README.md found" || exit 1',
-        'test -f "LICENSE" && echo "::notice::License file found" || exit 1',
-        'test -f "docs/reader-mode-documentation.md" && echo '
+        'test -f "README.md" && ! test -L "README.md" && echo '
+        '"::notice::README.md found" || exit 1',
+        'test -f "LICENSE" && ! test -L "LICENSE" && test -s "LICENSE" && '
+        'python3 -c "import hashlib,pathlib,sys; p=pathlib.Path(\'LICENSE\'); '
+        "sys.exit(0 if hashlib.sha256(p.read_bytes()).hexdigest() == "
+        f"'{CANONICAL_LICENSE_SHA256}' else 1)\" && echo "
+        '"::notice::License file found" || exit 1',
+        'test -f "requirements-ci.txt" && ! test -L "requirements-ci.txt" && echo '
+        '"::notice::CI requirements lock found" || exit 1',
+        'test -f "docs/reader-mode-documentation.md" && '
+        '! test -L "docs/reader-mode-documentation.md" && echo '
         '"::notice::Reader-mode standard found" || exit 1',
     )
+)
+REQUIRED_LOCAL_CI_BASH_BLOCKS = (
+    (
+        "git clone https://github.com/organvm/editorial-standards.git",
+        "cd editorial-standards",
+    ),
+    (REQUIRED_CI_INSTALL_COMMAND,),
+    tuple(line.strip() for line in REQUIRED_YAML_VALIDATION_COMMAND.splitlines())
+    + (
+        "python3 scripts/validate_editorial_contracts.py",
+        "python3 -m unittest discover -s tests -v",
+    )
+    + tuple(line.strip() for line in REQUIRED_STRUCTURE_VALIDATION_COMMAND.splitlines()),
+    (
+        "python3 -m py_compile scripts/validate_editorial_contracts.py "
+        "tests/test_editorial_contracts.py",
+        "git diff --check",
+    ),
+)
+REQUIRED_REPOSITORY_STRUCTURE_BLOCK = (
+    "editorial-standards/",
+    "README.md              # This file",
+    "LICENSE                # MIT License",
+    "requirements-ci.txt    # Exact hash-verified CI dependency lock",
+    "seed.yaml              # Automation contract",
+    "CHANGELOG.md           # Release history",
+    ".github/",
+    "workflows/",
+    "ci.yml             # Schema and editorial-contract validation",
+    "docs/",
+    "reader-mode-documentation.md",
+    "adr/",
+    "001-initial-architecture.md",
+    "002-quality-rubric-design.md",
+    "schemas/",
+    "category-taxonomy.yaml",
+    "frontmatter-schema.yaml",
+    "log-schema.yaml",
+    "quality-rubric.yaml",
+    "reader-mode-rubric.yaml",
+    "tag-governance.yaml",
+    "scripts/",
+    "validate_editorial_contracts.py",
+    "templates/",
+    "repository-readme-v2.md",
+    "audiences/",
+    "tests/",
+    "test_editorial_contracts.py",
+)
+REQUIRED_HOSTED_CI_STEPS = (
+    {
+        "name": "Checkout code",
+        "uses": "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+    },
+    {
+        "name": "Set up Python",
+        "uses": "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+        "with": {"python-version": "3.12"},
+    },
+    {
+        "name": "Install dependencies",
+        "run": REQUIRED_CI_INSTALL_COMMAND,
+    },
+    {
+        "name": "Validate YAML schemas",
+        "run": REQUIRED_YAML_VALIDATION_COMMAND + "\n",
+    },
+    {
+        "name": "Validate editorial contracts",
+        "run": "python3 scripts/validate_editorial_contracts.py",
+    },
+    {
+        "name": "Run adversarial contract regressions",
+        "run": "python3 -m unittest discover -s tests -v",
+    },
+    {
+        "name": "Validate structure",
+        "run": REQUIRED_STRUCTURE_VALIDATION_COMMAND + "\n",
+    },
+    {
+        "name": "Success",
+        "run": 'echo "::notice::Editorial Standards CI passed"',
+    },
 )
 CANONICAL_MAPPING_IDENTITIES = {
     Path("seed.yaml"): {
         "org": CANONICAL_ORGANIZATION,
         "repo": CANONICAL_REPOSITORY,
+        "produces": CANONICAL_PRODUCTION_EDGES,
         "consumes": [CANONICAL_SCHEMA_DEPENDENCY],
     },
     Path("ecosystem.yaml"): {
@@ -580,6 +862,72 @@ REQUIRED_READER_TABLE_ROW_LABELS = {
 }
 REQUIRED_READER_TABLE_ROWS = {
     (
+        Path("docs/reader-mode-documentation.md"),
+        ("Reader mode", "First question", "Foreground"),
+    ): (
+        (
+            "General",
+            "What is this, and why should I care?",
+            "Recognition, example, current state",
+        ),
+        (
+            "Technical",
+            "How is it built, and does it work?",
+            "Architecture, execution, tests, boundaries",
+        ),
+        (
+            "Humanities",
+            "What ideas and cultural problems does it engage?",
+            "Genealogy, form, interpretation, stakes",
+        ),
+        (
+            "Business",
+            "What operational problem does this change?",
+            "Workflow, integration, risk, evidence",
+        ),
+        (
+            "Evaluator",
+            "What did the author specifically do?",
+            "Initial state, contribution, proof, limits",
+        ),
+    ),
+    (
+        Path("docs/reader-mode-documentation.md"),
+        ("Class", "Repository function", "Required documentation"),
+    ): (
+        (
+            "A — Flagship system",
+            "Mature project spanning several audiences",
+            "README v2, all five audience editions, evidence record, project record",
+        ),
+        (
+            "B — Major project",
+            "Substantial project with two or three real audiences",
+            "README v2, 2–3 audience editions, evidence record, project record",
+        ),
+        (
+            "C — Supporting component",
+            "Library, service, schema, or infrastructure component",
+            "Technical README/edition, status, interfaces, evidence, project record",
+        ),
+        (
+            "D — Deployment artifact",
+            "Player, compiled build, mirror, or delivery shell",
+            "Minimal use-oriented README, canonical-project redirect, status",
+        ),
+        (
+            "E — Research/theory",
+            "Scholarship, artistic research, or conceptual corpus",
+            "Scholarly-first README/edition, sources, provenance, evidence record, "
+            "project record",
+        ),
+        (
+            "F — Archive/reference",
+            "Superseded or preserved material",
+            "Archive notice, provenance, immutable status, correct redirect",
+        ),
+    ),
+    (
         Path("templates/repository-readme-v2.md"),
         ("I am reading as…", "Start here"),
     ): (
@@ -703,6 +1051,9 @@ RELATED_REPOSITORY_PATTERN = (
 
 
 def _load_yaml(path: Path, errors: list[str]) -> Any:
+    if not _is_contained_regular_file(path):
+        errors.append(f"{path}: required contained regular YAML file is missing")
+        return None
     try:
         return yaml.load(
             path.read_text(encoding="utf-8"),
@@ -724,6 +1075,9 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _load_json(path: Path, errors: list[str]) -> Any:
+    if not _is_contained_regular_file(path):
+        errors.append(f"{path}: required contained regular JSON file is missing")
+        return None
     try:
         return json.loads(
             path.read_text(encoding="utf-8"),
@@ -787,6 +1141,44 @@ def _is_nonnegative_integer(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def _is_contained_regular_file(path: Path) -> bool:
+    """Reject missing files and tracked symlinks that escape the repository."""
+    return path.is_file() and not path.is_symlink()
+
+
+def _string_keyed_mapping(
+    mapping: dict[Any, Any],
+    context: str,
+    errors: list[str],
+) -> dict[str, Any]:
+    """Report and remove non-string/empty keys before sorted set operations."""
+    invalid_keys = [
+        key for key in mapping if not isinstance(key, str) or not key.strip()
+    ]
+    if invalid_keys:
+        errors.append(
+            f"{context}: keys must be nonempty strings: "
+            f"{sorted(map(repr, invalid_keys))}"
+        )
+    return {
+        key: value
+        for key, value in mapping.items()
+        if isinstance(key, str) and key.strip()
+    }
+
+
+def _valid_enum(rules: dict[str, Any], expected_type: str) -> list[Any] | None:
+    """Return an enum only when its definition is safe to apply to a value."""
+    enum = rules.get("enum")
+    if (
+        not isinstance(enum, list)
+        or not enum
+        or not all(_matches_type(value, expected_type) for value in enum)
+    ):
+        return None
+    return enum
+
+
 def _matches_pattern(
     pattern: Any,
     value: str,
@@ -817,21 +1209,22 @@ def _validate_rule_definition(
     if not isinstance(rules, dict):
         errors.append(f"{context} are not a mapping")
         return
+    rules = _string_keyed_mapping(rules, context, errors)
 
     expected_type = rules.get("type")
     supported_types = {"string", "integer", "list", "object"}
-    if expected_type not in supported_types:
+    if not isinstance(expected_type, str) or expected_type not in supported_types:
         errors.append(f"{context} declare unsupported type {expected_type!r}")
 
     allowed_rule_keys = {"type", "description", "enum"}
-    allowed_rule_keys.update(
-        {
-            "string": {"min_length", "max_length", "pattern", "format"},
-            "integer": {"min", "max"},
-            "list": {"min_items", "max_items", "item_type", "item_pattern"},
-            "object": {"properties", "required_keys"},
-        }.get(expected_type, set())
-    )
+    type_rule_keys = {
+        "string": {"min_length", "max_length", "pattern", "format"},
+        "integer": {"min", "max"},
+        "list": {"min_items", "max_items", "item_type", "item_pattern"},
+        "object": {"properties", "required_keys"},
+    }
+    if isinstance(expected_type, str):
+        allowed_rule_keys.update(type_rule_keys.get(expected_type, set()))
     unsupported_rule_keys = sorted(set(rules) - allowed_rule_keys)
     if unsupported_rule_keys:
         errors.append(
@@ -851,7 +1244,7 @@ def _validate_rule_definition(
     if enum is not None:
         if not isinstance(enum, list) or not enum:
             errors.append(f"{context} enum must be a nonempty list")
-        elif expected_type in supported_types:
+        elif isinstance(expected_type, str) and expected_type in supported_types:
             invalid_values = [
                 value for value in enum if not _matches_type(value, expected_type)
             ]
@@ -902,7 +1295,7 @@ def _validate_rule_definition(
 
     if expected_type == "list":
         item_type = rules.get("item_type")
-        if item_type not in supported_types:
+        if not isinstance(item_type, str) or item_type not in supported_types:
             errors.append(f"{context} declare unsupported item_type {item_type!r}")
         if "item_pattern" in rules and item_type != "string":
             errors.append(f"{context} item_pattern requires item_type 'string'")
@@ -912,7 +1305,12 @@ def _validate_rule_definition(
         if not isinstance(properties, dict):
             errors.append(f"{context} properties must be a mapping")
         else:
-            for child_field, child_rules in properties.items():
+            valid_properties = _string_keyed_mapping(
+                properties,
+                f"{context} properties",
+                errors,
+            )
+            for child_field, child_rules in valid_properties.items():
                 _validate_rule_definition(
                     schema_path,
                     f"{field}.{child_field}",
@@ -921,11 +1319,18 @@ def _validate_rule_definition(
                     require_description=False,
                 )
         if not isinstance(required_keys, list) or not all(
-            isinstance(key, str) for key in required_keys
+            isinstance(key, str) and bool(key.strip()) for key in required_keys
         ):
-            errors.append(f"{context} required_keys must be a list of strings")
+            errors.append(
+                f"{context} required_keys must be a list of nonempty strings"
+            )
         elif isinstance(properties, dict):
-            unknown_required = sorted(set(required_keys) - set(properties))
+            property_keys = {
+                key
+                for key in properties
+                if isinstance(key, str) and key.strip()
+            }
+            unknown_required = sorted(set(required_keys) - property_keys)
             if unknown_required:
                 errors.append(
                     f"{context} required_keys reference unknown properties: "
@@ -971,7 +1376,8 @@ def _validate_declared_type(
             errors.append(f"{path}: field {field!r} is shorter than allowed")
         if _is_nonnegative_integer(maximum) and len(value) > maximum:
             errors.append(f"{path}: field {field!r} is longer than allowed")
-        if "enum" in rules and value not in rules["enum"]:
+        enum = _valid_enum(rules, expected_type)
+        if enum is not None and value not in enum:
             errors.append(
                 f"{path}: field {field!r} has value {value!r} outside the schema enum"
             )
@@ -991,6 +1397,11 @@ def _validate_declared_type(
     elif expected_type == "integer":
         if value in PUBLICATION_TEMPLATE_SCALAR_PLACEHOLDERS.get(field, ()):
             return
+        enum = _valid_enum(rules, expected_type)
+        if enum is not None and value not in enum:
+            errors.append(
+                f"{path}: field {field!r} has value {value!r} outside the schema enum"
+            )
         minimum = rules.get("min")
         maximum = rules.get("max")
         if _is_nonnegative_integer(minimum) and value < minimum:
@@ -1000,6 +1411,11 @@ def _validate_declared_type(
     elif expected_type == "list":
         placeholder = PUBLICATION_TEMPLATE_LIST_PLACEHOLDERS.get((path, field))
         is_placeholder = placeholder is not None and tuple(value) == placeholder
+        enum = _valid_enum(rules, expected_type)
+        if not is_placeholder and enum is not None and value not in enum:
+            errors.append(
+                f"{path}: field {field!r} has value {value!r} outside the schema enum"
+            )
         minimum = rules.get("min_items")
         maximum = rules.get("max_items")
         if (
@@ -1012,12 +1428,21 @@ def _validate_declared_type(
             errors.append(f"{path}: field {field!r} has too many items")
         item_type = rules.get("item_type")
         item_pattern = rules.get("item_pattern")
+        valid_item_type = (
+            item_type if isinstance(item_type, str) and item_type in {
+                "string", "integer", "list", "object"
+            } else None
+        )
         for index, item in enumerate(value):
-            if item_type and not _matches_type(item, item_type):
+            if valid_item_type is not None and not _matches_type(item, valid_item_type):
                 errors.append(
                     f"{path}: field {field}[{index}] must have type {item_type!r}"
                 )
-            elif item_pattern:
+            elif (
+                valid_item_type == "string"
+                and isinstance(item, str)
+                and item_pattern
+            ):
                 matched = _matches_pattern(
                     item_pattern,
                     item,
@@ -1030,14 +1455,52 @@ def _validate_declared_type(
                         "the schema pattern"
                     )
     elif expected_type == "object":
-        properties = rules.get("properties", {})
-        if isinstance(properties, dict):
-            for key in sorted(set(value) & set(properties)):
-                child_rules = properties[key]
-                if isinstance(child_rules, dict):
-                    _validate_declared_type(
-                        value[key], child_rules, path, f"{field}.{key}", errors
-                    )
+        enum = _valid_enum(rules, expected_type)
+        if enum is not None and value not in enum:
+            errors.append(
+                f"{path}: field {field!r} has value {value!r} outside the schema enum"
+            )
+        properties_value = rules.get("properties", {})
+        properties = (
+            {
+                key: child_rules
+                for key, child_rules in properties_value.items()
+                if isinstance(key, str) and key.strip()
+            }
+            if isinstance(properties_value, dict)
+            else {}
+        )
+        required_value = rules.get("required_keys", [])
+        required_keys = (
+            {
+                key
+                for key in required_value
+                if isinstance(key, str) and key.strip()
+            }
+            if isinstance(required_value, list)
+            else set()
+        )
+        object_value = _string_keyed_mapping(
+            value,
+            f"{path}: field {field!r}",
+            errors,
+        )
+        missing_keys = sorted(required_keys - set(object_value))
+        unknown_keys = sorted(set(object_value) - set(properties))
+        if missing_keys:
+            errors.append(
+                f"{path}: field {field!r} is missing required keys: {missing_keys}"
+            )
+        if unknown_keys:
+            errors.append(
+                f"{path}: field {field!r} has unknown keys: {unknown_keys}"
+            )
+        for key in sorted(set(object_value) & set(properties)):
+            child_rules = properties[key]
+            if isinstance(child_rules, dict):
+                _validate_declared_type(
+                    object_value[key], child_rules, path, f"{field}.{key}", errors
+                )
 
 
 def _validate_schema_value(
@@ -1053,6 +1516,13 @@ def _validate_schema_value(
         )
         return
 
+    enum = _valid_enum(rules, expected_type)
+    if enum is not None and value not in enum:
+        errors.append(
+            f"templates/log.md: field {field!r} has value {value!r} outside "
+            "the schema enum"
+        )
+
     if expected_type == "string":
         minimum = rules.get("min_length")
         maximum = rules.get("max_length")
@@ -1060,11 +1530,6 @@ def _validate_schema_value(
             errors.append(f"templates/log.md: field {field!r} is shorter than allowed")
         if _is_nonnegative_integer(maximum) and len(value) > maximum:
             errors.append(f"templates/log.md: field {field!r} is longer than allowed")
-        if "enum" in rules and value not in rules["enum"]:
-            errors.append(
-                f"templates/log.md: field {field!r} has value {value!r} outside "
-                f"the schema enum"
-            )
         pattern = rules.get("pattern")
         placeholder = rules.get("format")
         if pattern and value != placeholder:
@@ -1097,14 +1562,23 @@ def _validate_schema_value(
             errors.append(f"templates/log.md: field {field!r} has too many items")
         item_type = rules.get("item_type")
         item_pattern = rules.get("item_pattern")
+        valid_item_type = (
+            item_type if isinstance(item_type, str) and item_type in {
+                "string", "integer", "list", "object"
+            } else None
+        )
         for index, item in enumerate(value):
             item_field = f"{field}[{index}]"
-            if item_type and not _matches_type(item, item_type):
+            if valid_item_type is not None and not _matches_type(item, valid_item_type):
                 errors.append(
                     f"templates/log.md: field {item_field!r} must have type "
                     f"{item_type!r}"
                 )
-            elif item_pattern:
+            elif (
+                valid_item_type == "string"
+                and isinstance(item, str)
+                and item_pattern
+            ):
                 matched = _matches_pattern(
                     item_pattern,
                     item,
@@ -1118,10 +1592,33 @@ def _validate_schema_value(
                     )
 
     elif expected_type == "object":
-        properties = rules.get("properties", {})
-        required_keys = set(rules.get("required_keys", []))
-        missing_keys = sorted(required_keys - set(value))
-        unknown_keys = sorted(set(value) - set(properties))
+        properties_value = rules.get("properties", {})
+        properties = (
+            {
+                key: child_rules
+                for key, child_rules in properties_value.items()
+                if isinstance(key, str) and key.strip()
+            }
+            if isinstance(properties_value, dict)
+            else {}
+        )
+        required_value = rules.get("required_keys", [])
+        required_keys = (
+            {
+                key
+                for key in required_value
+                if isinstance(key, str) and key.strip()
+            }
+            if isinstance(required_value, list)
+            else set()
+        )
+        object_value = _string_keyed_mapping(
+            value,
+            f"templates/log.md: field {field!r}",
+            errors,
+        )
+        missing_keys = sorted(required_keys - set(object_value))
+        unknown_keys = sorted(set(object_value) - set(properties))
         if missing_keys:
             errors.append(
                 f"templates/log.md: field {field!r} is missing required keys: "
@@ -1131,10 +1628,12 @@ def _validate_schema_value(
             errors.append(
                 f"templates/log.md: field {field!r} has unknown keys: {unknown_keys}"
             )
-        for key in sorted(set(value) & set(properties)):
-            _validate_schema_value(
-                value[key], properties[key], f"{field}.{key}", errors
-            )
+        for key in sorted(set(object_value) & set(properties)):
+            child_rules = properties[key]
+            if isinstance(child_rules, dict):
+                _validate_schema_value(
+                    object_value[key], child_rules, f"{field}.{key}", errors
+                )
 
 
 def _validate_log_template(root: Path, errors: list[str]) -> None:
@@ -1152,6 +1651,21 @@ def _validate_log_template(root: Path, errors: list[str]) -> None:
         return
 
     definition_error_count = len(errors)
+    required = _string_keyed_mapping(
+        required,
+        "schemas/log-schema.yaml: required_fields",
+        errors,
+    )
+    optional = _string_keyed_mapping(
+        optional,
+        "schemas/log-schema.yaml: optional_fields",
+        errors,
+    )
+    frontmatter = _string_keyed_mapping(
+        frontmatter,
+        "templates/log.md: frontmatter",
+        errors,
+    )
     duplicate_schema_fields = sorted(set(required) & set(optional))
     if duplicate_schema_fields:
         errors.append(
@@ -1315,11 +1829,108 @@ def _find_backtick_run(text: str, start: int, expected_length: int) -> int:
     """Locate the next backtick run with exactly the requested length."""
     position = text.find("`", start)
     while position >= 0:
-        run_length = len(text[position:]) - len(text[position:].lstrip("`"))
+        run_end = position + 1
+        while run_end < len(text) and text[run_end] == "`":
+            run_end += 1
+        run_length = run_end - position
         if run_length == expected_length:
             return position
-        position = text.find("`", position + run_length)
+        position = text.find("`", run_end)
     return -1
+
+
+def _inline_code_ranges(text: str) -> list[tuple[int, int]]:
+    """Return closed single-line CommonMark code-span ranges."""
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    while cursor < len(text):
+        start = text.find("`", cursor)
+        if start < 0:
+            break
+        run_end = start + 1
+        while run_end < len(text) and text[run_end] == "`":
+            run_end += 1
+        run_length = run_end - start
+        close = _find_backtick_run(text, run_end, run_length)
+        if close < 0:
+            break
+        end = close + run_length
+        ranges.append((start, end))
+        cursor = end
+    return ranges
+
+
+def _without_inline_code(text: str) -> str:
+    """Remove code spans so they cannot supply normative prose contracts."""
+    ranges = _inline_code_ranges(text)
+    if not ranges:
+        return text
+    visible: list[str] = []
+    cursor = 0
+    for start, end in ranges:
+        visible.append(text[cursor:start])
+        cursor = end
+    visible.append(text[cursor:])
+    return "".join(visible)
+
+
+def _inline_html_tag_ranges(text: str) -> list[tuple[int, int]]:
+    """Return quote-aware inline HTML tag ranges for contract-token filtering."""
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    while cursor < len(text):
+        start = text.find("<", cursor)
+        if start < 0:
+            break
+        quote: str | None = None
+        end = start + 1
+        while end < len(text):
+            character = text[end]
+            if quote is None and character in {'"', "'"}:
+                quote = character
+            elif quote == character:
+                quote = None
+            elif quote is None and character == ">":
+                end += 1
+                break
+            end += 1
+        ranges.append((start, end))
+        cursor = end
+    return ranges
+
+
+def _count_visible_markdown_link(lines: list[str], expected: str) -> int:
+    """Count exact rendered links, excluding code, images, escapes, and tags."""
+    count = 0
+    for line in lines:
+        code_ranges = _inline_code_ranges(line)
+        html_ranges = _inline_html_tag_ranges(line)
+        position = line.find(expected)
+        while position >= 0:
+            hidden = any(start <= position < end for start, end in code_ranges)
+            hidden = hidden or any(
+                start <= position < end for start, end in html_ranges
+            )
+            escaped = _is_backslash_escaped(line, position)
+            image = (
+                position > 0
+                and line[position - 1] == "!"
+                and not _is_backslash_escaped(line, position - 1)
+            )
+            if not hidden and not escaped and not image:
+                count += 1
+            position = line.find(expected, position + len(expected))
+    return count
+
+
+def _count_exact_line_sequence(lines: list[str], expected: tuple[str, ...]) -> int:
+    """Count one contiguous, physically exact rendered Markdown sequence."""
+    if not expected or len(expected) > len(lines):
+        return 0
+    return sum(
+        tuple(lines[index : index + len(expected)]) == expected
+        for index in range(len(lines) - len(expected) + 1)
+    )
 
 
 def _strip_html_comments_from_line(
@@ -1327,78 +1938,100 @@ def _strip_html_comments_from_line(
     in_comment: bool,
     inline_code_length: int,
 ) -> tuple[str, bool, int]:
-    """Strip inline code and comments while carrying both states across lines."""
+    """Strip comments while scanning each physical-line character at most once."""
     visible: list[str] = []
     cursor = 0
-    entered_in_inline_code = bool(inline_code_length)
+    chunk_start = 0
+
+    if in_comment:
+        comment_end = line.find("-->")
+        if comment_end < 0:
+            return "", True, inline_code_length
+        # A carried comment keeps its closing-line suffix in an existing
+        # block/inline context.  Prevent that suffix from becoming a new block.
+        visible.append("[html comment]")
+        cursor = comment_end + 3
+        chunk_start = cursor
+        in_comment = False
+
+    if inline_code_length:
+        code_end = _find_backtick_run(line, cursor, inline_code_length)
+        if code_end < 0:
+            return "".join(visible), in_comment, inline_code_length
+        # A carried code span likewise makes its closing-line suffix paragraph
+        # content rather than an independently rendered Markdown block.
+        visible.append("[inline code]")
+        cursor = code_end + inline_code_length
+        chunk_start = cursor
+        inline_code_length = 0
+
     while cursor < len(line):
-        if in_comment:
-            end = line.find("-->", cursor)
-            if end < 0:
+        if (
+            line.startswith("<!--", cursor)
+            and not _is_backslash_escaped(line, cursor)
+        ):
+            block_comment_start = (
+                cursor <= 3
+                and not line[:cursor].strip()
+                and not _is_indented_code_line(line)
+            )
+            if block_comment_start:
+                # A CommonMark block-position HTML comment consumes its entire
+                # physical closing line, including any same-line suffix.
+                comment_end = line.find("-->", cursor + 4)
+                return "", comment_end < 0, inline_code_length
+
+            visible.append(line[chunk_start:cursor])
+            comment_end = line.find("-->", cursor + 4)
+            if comment_end < 0:
                 return "".join(visible), True, inline_code_length
-            in_comment = False
-            cursor = end + 3
-            continue
-        if inline_code_length:
-            code_end = _find_backtick_run(line, cursor, inline_code_length)
-            if code_end < 0:
-                return "".join(visible), in_comment, inline_code_length
-            cursor = code_end + inline_code_length
-            inline_code_length = 0
-            if entered_in_inline_code:
-                # A code span that began on a previous physical line remains
-                # inline paragraph content after it closes.  Preserve a
-                # non-whitespace prefix so a suffix such as ``## Heading`` or
-                # ``| table |`` cannot be reinterpreted as a new block.
-                visible.append("[inline code]")
-                entered_in_inline_code = False
+            cursor = comment_end + 3
+            chunk_start = cursor
             continue
 
-        comment_start = _find_unescaped_token(line, "<!--", cursor)
-        code_start = _find_unescaped_token(line, "`", cursor)
-        if code_start >= 0:
-            code_length = len(line[code_start:]) - len(line[code_start:].lstrip("`"))
+        if line[cursor] == "`" and not _is_backslash_escaped(line, cursor):
+            run_end = cursor + 1
+            while run_end < len(line) and line[run_end] == "`":
+                run_end += 1
+            code_length = run_end - cursor
             possible_fence = (
-                code_length >= 3
-                and not line[:code_start].strip()
+                cursor <= 3
+                and code_length >= 3
+                and not line[:cursor].strip()
                 and not _is_indented_code_line(line)
             )
             if possible_fence:
-                visible.append(line[cursor:])
-                break
-        if code_start >= 0 and (comment_start < 0 or code_start < comment_start):
-            visible.append(line[cursor:code_start])
-            code_length = len(line[code_start:]) - len(line[code_start:].lstrip("`"))
-            code_end = _find_backtick_run(
-                line,
-                code_start + code_length,
-                code_length,
-            )
+                visible.append(line[chunk_start:])
+                return "".join(visible), in_comment, inline_code_length
+
+            visible.append(line[chunk_start:cursor])
+            code_end = _find_backtick_run(line, run_end, code_length)
             if code_end < 0:
                 return "".join(visible), in_comment, code_length
             code_end += code_length
-            visible.append(line[code_start:code_end])
+            visible.append(line[cursor:code_end])
             cursor = code_end
+            chunk_start = cursor
             continue
-        if comment_start < 0:
-            visible.append(line[cursor:])
-            break
-        visible.append(line[cursor:comment_start])
-        in_comment = True
-        cursor = comment_start + 4
+
+        cursor += 1
+
+    visible.append(line[chunk_start:])
     return "".join(visible), in_comment, inline_code_length
 
 
 def _markdown_contract_view(
     path: Path, content: str, errors: list[str]
-) -> tuple[list[str], list[tuple[str, str]]]:
+) -> tuple[list[str], list[tuple[str | None, str, str]]]:
     """Return rendered contract lines and visible fenced blocks in one pass."""
     rendered: list[str] = []
-    fenced_blocks: list[tuple[str, str]] = []
+    fenced_blocks: list[tuple[str | None, str, str]] = []
     fence_character: str | None = None
     fence_length = 0
     fence_info = ""
+    fence_owner_h2: str | None = None
     fence_lines: list[str] = []
+    current_h2: str | None = None
     in_comment = False
     inline_code_length = 0
     raw_html_end: re.Pattern[str] | None = None
@@ -1416,10 +2049,13 @@ def _markdown_contract_view(
                 and len(fence.group(1)) >= fence_length
                 and not stripped[len(fence.group(1)) :].strip()
             ):
-                fenced_blocks.append((fence_info, "\n".join(fence_lines)))
+                fenced_blocks.append(
+                    (fence_owner_h2, fence_info, "\n".join(fence_lines))
+                )
                 fence_character = None
                 fence_length = 0
                 fence_info = ""
+                fence_owner_h2 = None
                 fence_lines = []
             else:
                 fence_lines.append(line)
@@ -1443,14 +2079,32 @@ def _markdown_contract_view(
             rendered.append(line)
             continue
 
+        if current_h2 == "## Development" and re.search(
+            r"<\?|<!\[CDATA\[|<![A-Z]|</?[A-Za-z]",
+            _without_inline_code(line),
+        ):
+            # Preserve a parser-state-aware signal for raw HTML that could
+            # render an executable recipe while evading fenced-block inventory.
+            fenced_blocks.append((current_h2, "raw-html", line.strip()))
+
         stripped = line.lstrip()
         if _is_indented_code_line(line):
+            fenced_blocks.append((current_h2, "indented", stripped))
             continue
         fence = re.match(r"(`{3,}|~{3,})", stripped)
         if fence is not None:
-            fence_character = fence.group(1)[0]
-            fence_length = len(fence.group(1))
-            fence_info = stripped[len(fence.group(1)) :].strip().lower()
+            candidate = fence.group(1)
+            candidate_info = stripped[len(candidate) :].strip()
+            if candidate[0] == "`" and "`" in candidate_info:
+                # CommonMark forbids backticks in a backtick fence's info
+                # string.  Treat this as ordinary rendered text rather than
+                # promoting the following lines into a canonical code block.
+                rendered.append(line)
+                continue
+            fence_character = candidate[0]
+            fence_length = len(candidate)
+            fence_info = candidate_info.lower()
+            fence_owner_h2 = current_h2
             continue
 
         raw_special: tuple[re.Match[str], re.Pattern[str]] | None = None
@@ -1482,6 +2136,8 @@ def _markdown_contract_view(
             continue
 
         rendered.append(line)
+        if re.fullmatch(r"## [^#].*", line):
+            current_h2 = line
 
     if fence_character is not None:
         errors.append(f"{path}: unclosed Markdown code fence")
@@ -1497,6 +2153,32 @@ def _rendered_markdown_lines(
 ) -> list[str]:
     """Remove rendered-invisible blocks from Markdown contracts."""
     return _markdown_contract_view(path, content, errors)[0]
+
+
+def _exact_rendered_section(
+    path: Path,
+    lines: list[str],
+    heading: str,
+    errors: list[str],
+) -> list[str] | None:
+    """Return one exact rendered H2 section without substring promotion."""
+    occurrences = [index for index, line in enumerate(lines) if line == heading]
+    if len(occurrences) != 1:
+        errors.append(
+            f"{path}: heading {heading!r} must appear exactly once; "
+            f"found {len(occurrences)}"
+        )
+        return None
+    start = occurrences[0] + 1
+    end = next(
+        (
+            index
+            for index in range(start, len(lines))
+            if re.fullmatch(r"## [^#].*", lines[index])
+        ),
+        len(lines),
+    )
+    return lines[start:end]
 
 
 def _format_enum(values: Any) -> str:
@@ -1707,8 +2389,10 @@ def _validate_publication_body(
 def _validate_reader_mode_documentation(root: Path, errors: list[str]) -> None:
     relative_path = Path("docs/reader-mode-documentation.md")
     path = root / relative_path
-    if not path.is_file():
-        errors.append(f"{relative_path}: required reader-mode standard missing")
+    if not _is_contained_regular_file(path):
+        errors.append(
+            f"{relative_path}: required contained regular reader-mode standard missing"
+        )
         return
     content = path.read_text(encoding="utf-8")
     rendered_lines = _rendered_markdown_lines(relative_path, content, errors)
@@ -1757,40 +2441,230 @@ def _validate_reader_mode_documentation(root: Path, errors: list[str]) -> None:
         )
 
 
+def _validate_claim_boundary_policies(root: Path, errors: list[str]) -> None:
+    """Bind the minimal no-silent-factual-drift policy across reader routes."""
+    for relative_path, section_policies in REQUIRED_CLAIM_BOUNDARY_POLICIES.items():
+        path = root / relative_path
+        if not _is_contained_regular_file(path):
+            errors.append(f"{relative_path}: required claim-boundary policy is missing")
+            continue
+        rendered = _rendered_markdown_lines(
+            relative_path,
+            path.read_text(encoding="utf-8"),
+            errors,
+        )
+        prose_lines = [_without_inline_code(line) for line in rendered]
+        whole_document = re.sub(r"\s+", " ", "\n".join(prose_lines)).strip()
+        for heading, policies in section_policies.items():
+            rendered_section = _exact_rendered_section(
+                relative_path,
+                rendered,
+                heading,
+                errors,
+            )
+            section = [
+                _without_inline_code(line) for line in (rendered_section or ())
+            ]
+            normalized_section = re.sub(
+                r"\s+", " ", "\n".join(section or ())
+            ).strip()
+            expected_lines = REQUIRED_CLAIM_BOUNDARY_LINE_SEQUENCES[
+                relative_path
+            ][heading]
+            exact_sequences = _count_exact_line_sequence(
+                rendered_section or [], expected_lines
+            )
+            if exact_sequences != 1:
+                errors.append(
+                    f"{relative_path}: canonical claim-boundary lines must "
+                    f"appear exactly once in {heading!r}; found {exact_sequences}"
+                )
+            for policy in policies:
+                section_occurrences = normalized_section.count(policy)
+                document_occurrences = whole_document.count(policy)
+                if section_occurrences != 1 or document_occurrences != 1:
+                    errors.append(
+                        f"{relative_path}: canonical claim-boundary policy must "
+                        f"appear exactly once in {heading!r}; found "
+                        f"section={section_occurrences}, "
+                        f"document={document_occurrences}: {policy!r}"
+                    )
+            for forbidden in FORBIDDEN_CLAIM_BOUNDARY_POLICIES.get(
+                relative_path, {}
+            ).get(heading, ()):
+                if forbidden in normalized_section:
+                    errors.append(
+                        f"{relative_path}: contradictory claim-boundary policy "
+                        f"appears in {heading!r}: {forbidden!r}"
+                    )
+
+
+def _validate_canonical_schema_links(root: Path, errors: list[str]) -> None:
+    """Pin normative schema links to the reviewed foundation merge."""
+    schema_url_pattern = re.compile(
+        r"https://github\.com/[^/\s)]+/schema-definitions/blob/[^\s)]+"
+    )
+    for relative_path, section_links in CANONICAL_SCHEMA_LINKS.items():
+        path = root / relative_path
+        if not _is_contained_regular_file(path):
+            continue
+        rendered_lines = _rendered_markdown_lines(
+            relative_path,
+            path.read_text(encoding="utf-8"),
+            errors,
+        )
+        expected_urls: list[str] = []
+        for heading, expected_links in section_links.items():
+            section = _exact_rendered_section(
+                relative_path,
+                rendered_lines,
+                heading,
+                errors,
+            )
+            expected_lines = CANONICAL_SCHEMA_LINK_LINE_SEQUENCES[
+                relative_path
+            ][heading]
+            exact_sequences = _count_exact_line_sequence(
+                section or [], expected_lines
+            )
+            if exact_sequences != 1:
+                errors.append(
+                    f"{relative_path}: canonical schema link prose must appear "
+                    f"exactly once in {heading!r}; found {exact_sequences}"
+                )
+            for expected_link in expected_links:
+                occurrences = _count_visible_markdown_link(
+                    section or [], expected_link
+                )
+                if occurrences != 1:
+                    errors.append(
+                        f"{relative_path}: canonical schema link must appear "
+                        f"exactly once in {heading!r}; found {occurrences}: "
+                        f"{expected_link!r}"
+                    )
+                expected_urls.extend(schema_url_pattern.findall(expected_link))
+        rendered = "\n".join(rendered_lines)
+        actual_urls = tuple(schema_url_pattern.findall(rendered))
+        if actual_urls != tuple(expected_urls):
+            errors.append(
+                f"{relative_path}: canonical schema URL inventory mismatch: "
+                f"expected={expected_urls}, actual={list(actual_urls)}"
+            )
+
+
 def _validate_readme(
     root: Path, required_map: dict[str, Any], errors: list[str]
 ) -> None:
     readme_path = root / "README.md"
+    if not _is_contained_regular_file(readme_path):
+        errors.append("README.md: required contained regular file is missing")
+        return
     raw_readme = readme_path.read_text(encoding="utf-8")
-    rendered_lines, _ = _markdown_contract_view(
+    raw_lines = raw_readme.splitlines()
+    raw_development_headings = [
+        index for index, line in enumerate(raw_lines) if line == "## Development"
+    ]
+    if len(raw_development_headings) != 1:
+        errors.append(
+            "README.md: raw Development heading must appear exactly once so "
+            "hidden executable blocks cannot redirect the local recipe"
+        )
+    else:
+        raw_start = raw_development_headings[0] + 1
+        raw_end = next(
+            (
+                index
+                for index in range(raw_start, len(raw_lines))
+                if re.fullmatch(r"## [^#].*", raw_lines[index])
+            ),
+            len(raw_lines),
+        )
+        fence_character: str | None = None
+        fence_length = 0
+        for line in raw_lines[raw_start:raw_end]:
+            stripped = line.lstrip()
+            fence = re.match(r"(`{3,}|~{3,})", stripped)
+            if fence_character is not None:
+                if (
+                    fence is not None
+                    and fence.group(1)[0] == fence_character
+                    and len(fence.group(1)) >= fence_length
+                    and not stripped[len(fence.group(1)) :].strip()
+                ):
+                    fence_character = None
+                    fence_length = 0
+                continue
+            if fence is not None:
+                candidate = fence.group(1)
+                candidate_info = stripped[len(candidate) :]
+                if not (candidate[0] == "`" and "`" in candidate_info):
+                    fence_character = candidate[0]
+                    fence_length = len(candidate)
+                    continue
+            if re.search(r"<!--|<\?|<!\[CDATA\[|<![A-Z]|</?[A-Za-z]", line):
+                errors.append(
+                    "README.md: raw HTML is forbidden in Development so it "
+                    "cannot supply an unclassified executable recipe"
+                )
+                break
+    rendered_lines, fenced_blocks = _markdown_contract_view(
         Path("README.md"), raw_readme, errors
     )
     rendered_readme = "\n".join(rendered_lines)
     required_fields = set(required_map)
-    source_development_parts = raw_readme.split("## Development", 1)
-    source_development_section = (
-        source_development_parts[1].split("\n## ", 1)[0]
-        if len(source_development_parts) == 2
-        else ""
+    development_lines = _exact_rendered_section(
+        Path("README.md"), rendered_lines, "## Development", errors
     )
-    rendered_development_parts = rendered_readme.split("## Development", 1)
-    rendered_development_section = (
-        rendered_development_parts[1].split("\n## ", 1)[0]
-        if len(rendered_development_parts) == 2
-        else ""
-    )
-    _, development_fences = _markdown_contract_view(
-        Path("README.md"), source_development_section, errors
-    )
+    rendered_development_section = "\n".join(development_lines or ())
     bash_blocks = [
-        body for info, body in development_fences if info.partition(" ")[0] == "bash"
+        body
+        for owner_h2, info, body in fenced_blocks
+        if owner_h2 == "## Development" and info.partition(" ")[0] == "bash"
     ]
+    development_executable_blocks = tuple(
+        (info, executable_lines)
+        for owner_h2, info, body in fenced_blocks
+        if owner_h2 == "## Development"
+        if (
+            executable_lines := tuple(
+                line.strip()
+                for line in body.splitlines()
+                if line.strip()
+                and (
+                    info.partition(" ")[0] != "bash"
+                    or not line.lstrip().startswith("#")
+                )
+            )
+        )
+    )
     executable_bash_lines = [
         line.strip()
         for block in bash_blocks
         for line in block.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
+    executable_bash_blocks = tuple(
+        executable_lines
+        for block in bash_blocks
+        if (
+            executable_lines := tuple(
+                line.strip()
+                for line in block.splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            )
+        )
+    )
+    expected_development_blocks = tuple(
+        ("bash", block) for block in REQUIRED_LOCAL_CI_BASH_BLOCKS
+    ) + (("", REQUIRED_REPOSITORY_STRUCTURE_BLOCK),)
+    if (
+        executable_bash_blocks != REQUIRED_LOCAL_CI_BASH_BLOCKS
+        or development_executable_blocks != expected_development_blocks
+    ):
+        errors.append(
+            "README.md: Development bash recipe must match the exact canonical "
+            "executable blocks and order"
+        )
     for prerequisite in REQUIRED_LOCAL_CI_PREREQUISITES:
         if prerequisite not in rendered_development_section:
             errors.append(
@@ -1822,8 +2696,45 @@ def _validate_readme(
             "README.md: local CI reproduction commands must follow hosted CI order"
         )
 
-    workflow = _load_yaml(root / ".github/workflows/ci.yml", errors)
+    workflow_path = root / ".github/workflows/ci.yml"
+    try:
+        workflow_source = workflow_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f".github/workflows/ci.yml: cannot inspect source keys: {exc}")
+        workflow_source = ""
+    source_top_level_keys = tuple(
+        match.group(1)
+        for line in workflow_source.splitlines()
+        if (match := re.fullmatch(r"([A-Za-z_][A-Za-z0-9_-]*):(?:\s+.*)?", line))
+    )
+    expected_source_top_level_keys = ("name", "on", "permissions", "jobs")
+    if source_top_level_keys != expected_source_top_level_keys:
+        errors.append(
+            ".github/workflows/ci.yml: source top-level keys/order must be "
+            f"exactly {list(expected_source_top_level_keys)}; found "
+            f"{list(source_top_level_keys)}"
+        )
+
+    workflow = _load_yaml(workflow_path, errors)
     if isinstance(workflow, dict):
+        trigger_key: str | bool = True if True in workflow else "on"
+        expected_workflow_keys = {"name", trigger_key, "permissions", "jobs"}
+        if set(workflow) != expected_workflow_keys:
+            errors.append(
+                ".github/workflows/ci.yml: workflow mapping must contain exactly "
+                f"{sorted(map(str, expected_workflow_keys))}; found "
+                f"{sorted(map(str, workflow))}"
+            )
+        if workflow.get("name") != REQUIRED_HOSTED_CI_NAME:
+            errors.append(
+                ".github/workflows/ci.yml: workflow name must be exactly "
+                f"{REQUIRED_HOSTED_CI_NAME!r}"
+            )
+        if workflow.get("permissions") != REQUIRED_HOSTED_CI_PERMISSIONS:
+            errors.append(
+                ".github/workflows/ci.yml: workflow permissions must be exactly "
+                f"{REQUIRED_HOSTED_CI_PERMISSIONS!r}"
+            )
         workflow_controls = sorted(
             FORBIDDEN_HOSTED_CI_WORKFLOW_CONTROL_KEYS & set(workflow)
         )
@@ -1847,6 +2758,11 @@ def _validate_readme(
                 f"{expected_workflow_triggers!r}; found {workflow_triggers!r}"
             )
     jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
+    if isinstance(jobs, dict) and set(jobs) != {"validate"}:
+        errors.append(
+            ".github/workflows/ci.yml: job inventory must contain exactly "
+            "['validate']"
+        )
     validate_job = jobs.get("validate") if isinstance(jobs, dict) else None
     if isinstance(validate_job, dict):
         job_controls = sorted(
@@ -1882,6 +2798,11 @@ def _validate_readme(
             ".github/workflows/ci.yml: validate job step inventory/order mismatch: "
             f"expected={list(REQUIRED_HOSTED_CI_STEP_NAMES)}, "
             f"actual={list(actual_step_names)}"
+        )
+    if workflow_steps != list(REQUIRED_HOSTED_CI_STEPS):
+        errors.append(
+            ".github/workflows/ci.yml: validate job steps must match the exact "
+            "canonical mappings, action pins, configuration, and commands"
         )
     for index, step in enumerate(workflow_steps):
         if not isinstance(step, dict):
@@ -2005,38 +2926,36 @@ def _validate_readme(
         if phrase not in rendered_readme:
             errors.append(f"README.md: missing schema-derived field count: {phrase}")
 
-    category_parts = rendered_readme.split("## Essay Categories", 1)
-    if len(category_parts) != 2:
-        errors.append("README.md: missing Essay Categories section")
-    else:
-        category_section = category_parts[1].split("\n## ", 1)[0]
+    category_lines = _exact_rendered_section(
+        Path("README.md"), rendered_lines, "## Essay Categories", errors
+    )
+    if category_lines is not None:
         _validate_reader_structure(
             Path("README.md"),
-            category_section.splitlines(),
+            category_lines,
             CATEGORY_README_HEADINGS,
             errors,
         )
 
-    quality_parts = rendered_readme.split("## Quality Rubric", 1)
-    if len(quality_parts) != 2:
-        errors.append("README.md: missing Quality Rubric section")
-    else:
-        quality_section = quality_parts[1].split("\n## ", 1)[0]
+    quality_lines = _exact_rendered_section(
+        Path("README.md"), rendered_lines, "## Quality Rubric", errors
+    )
+    if quality_lines is not None:
         _validate_reader_structure(
             Path("README.md"),
-            quality_section.splitlines(),
+            quality_lines,
             QUALITY_RUBRIC_README_HEADINGS,
             errors,
         )
         _validate_quality_rubric_readme(root, rendered_readme, errors)
 
-    section_parts = rendered_readme.split("## Frontmatter Schema", 1)
-    if len(section_parts) != 2:
-        errors.append("README.md: missing Frontmatter Schema section")
+    section_lines = _exact_rendered_section(
+        Path("README.md"), rendered_lines, "## Frontmatter Schema", errors
+    )
+    if section_lines is None:
         return
 
-    section = section_parts[1].split("\n## ", 1)[0]
-    lines = section.splitlines()
+    lines = section_lines
     header_candidates = [
         index
         for index, line in enumerate(lines)
@@ -2133,7 +3052,9 @@ def _validate_readme(
                 "are not a mapping"
             )
             continue
-        actual_rule_keys = set(rules) - {"description"}
+        actual_rule_keys = {
+            key for key in rules if isinstance(key, str) and key.strip()
+        } - {"description"}
         expected_rule_keys = FRONTMATTER_README_RULE_KEYS.get(field, set())
         if actual_rule_keys != expected_rule_keys:
             errors.append(
@@ -2259,6 +3180,11 @@ def _validate_category_taxonomy(
             "structured collections"
         )
         return
+    categories = _string_keyed_mapping(
+        categories,
+        "schemas/category-taxonomy.yaml: categories",
+        errors,
+    )
 
     taxonomy_categories = set(categories)
     frontmatter_categories = set(enum)
@@ -2342,6 +3268,11 @@ def _validate_reader_rubric(root: Path, errors: list[str]) -> None:
     if not isinstance(dimensions, dict):
         errors.append(f"{rubric_path}: dimensions must be a YAML mapping")
         return
+    dimensions = _string_keyed_mapping(
+        dimensions,
+        f"{rubric_path}: dimensions",
+        errors,
+    )
     actual_dimensions = set(dimensions)
     expected_dimensions = set(READER_RUBRIC_DIMENSIONS)
     if actual_dimensions != expected_dimensions:
@@ -2410,6 +3341,11 @@ def _validate_quality_rubric(root: Path, errors: list[str]) -> None:
     if not isinstance(dimensions, dict):
         errors.append(f"{rubric_path}: dimensions must be a YAML mapping")
         return
+    dimensions = _string_keyed_mapping(
+        dimensions,
+        f"{rubric_path}: dimensions",
+        errors,
+    )
     actual_dimensions = set(dimensions)
     expected_dimensions = set(QUALITY_RUBRIC_DIMENSIONS)
     if actual_dimensions != expected_dimensions:
@@ -2576,14 +3512,25 @@ def _validate_repository_identity(root: Path, errors: list[str]) -> None:
                     f"{registry_path}: expected exactly one canonical registry "
                     f"entry for {canonical_slug!r}; found {len(canonical_entries)}"
                 )
+            elif canonical_entries[0] != CANONICAL_REGISTRY_ENTRY:
+                errors.append(
+                    f"{registry_path}: canonical registry entry must match the "
+                    "exact reviewed identity and planning fields"
+                )
 
+    rendered_identity_paths = {Path("AGENTS.md"), Path("CLAUDE.md"), Path("GEMINI.md")}
     for relative_path, expected_lines in CANONICAL_IDENTITY_LINES.items():
         path = root / relative_path
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            content = path.read_text(encoding="utf-8")
         except OSError as exc:
             errors.append(f"{relative_path}: cannot audit repository identity: {exc}")
             continue
+        lines = (
+            _rendered_markdown_lines(relative_path, content, errors)
+            if relative_path in rendered_identity_paths
+            else content.splitlines()
+        )
         for expected_line in expected_lines:
             occurrences = lines.count(expected_line)
             if occurrences != 1:
@@ -2642,18 +3589,45 @@ def validate(root: Path) -> list[str]:
     root = root.resolve()
     errors: list[str] = []
 
-    if not (root / "LICENSE").is_file():
-        errors.append("LICENSE: required repository license file is missing")
+    license_path = root / "LICENSE"
+    license_valid = _is_contained_regular_file(license_path)
+    if license_valid:
+        license_valid = (
+            license_path.stat().st_size > 0
+            and hashlib.sha256(license_path.read_bytes()).hexdigest()
+            == CANONICAL_LICENSE_SHA256
+        )
+    if not license_valid:
+        errors.append(
+            "LICENSE: canonical license file is missing, empty, symlinked, or changed"
+        )
+
+    requirements_path = root / "requirements-ci.txt"
+    if not _is_contained_regular_file(requirements_path):
+        errors.append(
+            "requirements-ci.txt: required contained regular CI dependency lock missing"
+        )
+    else:
+        requirements = requirements_path.read_text(encoding="utf-8")
+        if requirements != REQUIRED_CI_REQUIREMENTS:
+            errors.append(
+                "requirements-ci.txt: dependency lock must exactly pin the "
+                "canonical PyYAML artifacts"
+            )
 
     _validate_schema_inventory(root, errors)
     _validate_reader_mode_documentation(root, errors)
+    _validate_claim_boundary_policies(root, errors)
+    _validate_canonical_schema_links(root, errors)
 
     overlap = PUBLICATION_TEMPLATES & READER_MODE_TEMPLATES
     if overlap:
         errors.append(f"template contracts overlap: {sorted(map(str, overlap))}")
     declared = PUBLICATION_TEMPLATES | READER_MODE_TEMPLATES
     discovered = {
-        path.relative_to(root) for path in (root / "templates").rglob("*.md")
+        path.relative_to(root)
+        for path in (root / "templates").rglob("*")
+        if path.is_file() or path.is_symlink()
     }
     unclassified = sorted(discovered - declared)
     if unclassified:
@@ -2687,8 +3661,11 @@ def validate(root: Path) -> list[str]:
     frontmatters: dict[Path, dict[str, Any]] = {}
     for relative_path in sorted(PUBLICATION_TEMPLATES):
         path = root / relative_path
-        if not path.is_file():
-            errors.append(f"{relative_path}: required publication template missing")
+        if not _is_contained_regular_file(path):
+            errors.append(
+                f"{relative_path}: required contained regular publication "
+                "template missing"
+            )
             continue
         data = _frontmatter(path, errors)
         if data is not None:
@@ -2707,6 +3684,16 @@ def validate(root: Path) -> list[str]:
     if not isinstance(required_map, dict) or not isinstance(optional_map, dict):
         errors.append("schemas/frontmatter-schema.yaml: fields must be YAML mappings")
         return errors
+    required_map = _string_keyed_mapping(
+        required_map,
+        "schemas/frontmatter-schema.yaml: required_fields",
+        errors,
+    )
+    optional_map = _string_keyed_mapping(
+        optional_map,
+        "schemas/frontmatter-schema.yaml: optional_fields",
+        errors,
+    )
     duplicate_schema_fields = sorted(set(required_map) & set(optional_map))
     if duplicate_schema_fields:
         errors.append(
@@ -2726,6 +3713,11 @@ def validate(root: Path) -> list[str]:
         frontmatter = frontmatters.get(path)
         if frontmatter is None:
             continue
+        frontmatter = _string_keyed_mapping(
+            frontmatter,
+            f"{path}: frontmatter",
+            errors,
+        )
         fields = set(frontmatter)
         missing = sorted(required_fields - fields)
         unknown = sorted(fields - allowed_fields)
@@ -2815,8 +3807,11 @@ def validate(root: Path) -> list[str]:
 
     for relative_path in sorted(READER_MODE_TEMPLATES):
         path = root / relative_path
-        if not path.is_file():
-            errors.append(f"{relative_path}: required reader-mode template missing")
+        if not _is_contained_regular_file(path):
+            errors.append(
+                f"{relative_path}: required contained regular reader-mode "
+                "template missing"
+            )
             continue
         content = path.read_text(encoding="utf-8")
         content_lines = _rendered_markdown_lines(relative_path, content, errors)

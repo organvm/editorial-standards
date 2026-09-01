@@ -10,7 +10,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from validate_editorial_contracts import validate  # noqa: E402
+from validate_editorial_contracts import (  # noqa: E402
+    _find_backtick_run,
+    _strip_html_comments_from_line,
+    validate,
+)
 
 
 class EditorialContractTests(unittest.TestCase):
@@ -166,6 +170,178 @@ class EditorialContractTests(unittest.TestCase):
         path.write_text(duplicate_scope, encoding="utf-8")
         self.assert_contract_error("fields cannot be both required and optional")
         path.write_text(original, encoding="utf-8")
+
+    def test_requires_nonempty_string_schema_field_and_property_keys(self) -> None:
+        frontmatter_path = self.fixture_root / "schemas/frontmatter-schema.yaml"
+        original_frontmatter = frontmatter_path.read_text(encoding="utf-8")
+        for key in ("7", "true", "null", '""'):
+            with self.subTest(scope="optional_fields", key=key):
+                injected = (
+                    "optional_fields:\n"
+                    f"  {key}:\n"
+                    "    type: string\n"
+                    "    description: Invalid field key.\n"
+                )
+                frontmatter_path.write_text(
+                    original_frontmatter.replace(
+                        "optional_fields:\n", injected, 1
+                    ),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("keys must be nonempty strings")
+                frontmatter_path.write_text(original_frontmatter, encoding="utf-8")
+
+        log_path = self.fixture_root / "schemas/log-schema.yaml"
+        original_log = log_path.read_text(encoding="utf-8")
+        properties = "    properties:\n"
+        self.assertIn(properties, original_log)
+        log_path.write_text(
+            original_log.replace(
+                properties,
+                properties
+                + "      7:\n"
+                + "        type: string\n"
+                + "        description: Invalid property key.\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("properties: keys must be nonempty strings")
+
+    def test_reports_malformed_rule_keys_types_and_list_items_without_crashing(self) -> None:
+        schema_path = self.fixture_root / "schemas/frontmatter-schema.yaml"
+        template_path = self.fixture_root / "templates/guide.md"
+        original_schema = schema_path.read_text(encoding="utf-8")
+        original_template = template_path.read_text(encoding="utf-8")
+
+        rule_anchor = "  layout:\n    type: string\n"
+        self.assertIn(rule_anchor, original_schema)
+        schema_path.write_text(
+            original_schema.replace(
+                rule_anchor,
+                "  layout:\n    type: string\n    7: invalid-rule-key\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("keys must be nonempty strings")
+
+        for malformed_type in ("[string]", "{kind: string}"):
+            with self.subTest(type=malformed_type):
+                schema_path.write_text(
+                    original_schema.replace(
+                        rule_anchor,
+                        f"  layout:\n    type: {malformed_type}\n",
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("declare unsupported type")
+
+        schema_path.write_text(
+            original_schema.replace(
+                "optional_fields:\n",
+                "optional_fields:\n"
+                "  unsafe_items:\n"
+                "    type: list\n"
+                "    item_type: \"\"\n"
+                "    item_pattern: '^x$'\n"
+                "    description: Malformed item rule.\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        template_path.write_text(
+            original_template.replace(
+                "references: []\n", "references: []\nunsafe_items: [1]\n", 1
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("declare unsupported item_type")
+        self.assert_contract_error("item_pattern requires item_type 'string'")
+
+    def test_enforces_integer_enums_for_essay_and_log_values(self) -> None:
+        schema_path = self.fixture_root / "schemas/frontmatter-schema.yaml"
+        template_path = self.fixture_root / "templates/guide.md"
+        original_schema = schema_path.read_text(encoding="utf-8")
+        original_template = template_path.read_text(encoding="utf-8")
+        schema_path.write_text(
+            original_schema.replace(
+                "optional_fields:\n",
+                "optional_fields:\n"
+                "  edition:\n"
+                "    type: integer\n"
+                "    enum: [1]\n"
+                "    description: Exact edition.\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        template_path.write_text(
+            original_template.replace("references: []\n", "references: []\nedition: 2\n", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("field 'edition' has value 2 outside the schema enum")
+
+        log_schema_path = self.fixture_root / "schemas/log-schema.yaml"
+        log_template_path = self.fixture_root / "templates/log.md"
+        original_log_schema = log_schema_path.read_text(encoding="utf-8")
+        original_log_template = log_template_path.read_text(encoding="utf-8")
+        log_schema_path.write_text(
+            original_log_schema.replace(
+                "      commits:\n        type: integer\n        min: 0\n",
+                "      commits:\n        type: integer\n        enum: [1]\n        min: 0\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        log_template_path.write_text(
+            original_log_template.replace(
+                "mood: focused\n",
+                "mood: focused\n"
+                "activity:\n"
+                '  since: "2026-09-01"\n'
+                "  commits: 2\n"
+                "  repos_active: 0\n"
+                "  files_changed: 0\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error(
+            "field 'activity.commits' has value 2 outside the schema enum"
+        )
+
+    def test_enforces_nested_essay_object_required_and_known_keys(self) -> None:
+        schema_path = self.fixture_root / "schemas/frontmatter-schema.yaml"
+        template_path = self.fixture_root / "templates/guide.md"
+        schema = schema_path.read_text(encoding="utf-8")
+        template = template_path.read_text(encoding="utf-8")
+        schema_path.write_text(
+            schema.replace(
+                "optional_fields:\n",
+                "optional_fields:\n"
+                "  provenance:\n"
+                "    type: object\n"
+                "    required_keys: [source]\n"
+                "    properties:\n"
+                "      source:\n"
+                "        type: string\n"
+                "    description: Bounded source record.\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        template_path.write_text(
+            template.replace(
+                "references: []\n",
+                "references: []\nprovenance:\n  unauthorized: true\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("field 'provenance' is missing required keys")
+        self.assert_contract_error("field 'provenance' has unknown keys")
 
     def test_rejects_gap_before_frontmatter_table_data(self) -> None:
         path = self.fixture_root / "README.md"
@@ -336,6 +512,23 @@ class EditorialContractTests(unittest.TestCase):
         self.assertIn(header, original)
         path.write_text(original.replace(header, "", 1), encoding="utf-8")
         self.assert_contract_error("required table header")
+
+        for label in row_labels:
+            with self.subTest(label=label, mutation="normative-cell"):
+                row = next(
+                    line
+                    for line in original.splitlines()
+                    if line.startswith(f"| {label} |")
+                )
+                cells = row.split("|")
+                self.assertGreaterEqual(len(cells), 5)
+                cells[-2] = " Reversed or unverified guidance "
+                replacement = "|".join(cells)
+                path.write_text(
+                    original.replace(row, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("canonical rows mismatch")
+                path.write_text(original, encoding="utf-8")
 
     def test_pins_complete_root_readme_sequence_in_its_section(self) -> None:
         path = self.fixture_root / "docs/reader-mode-documentation.md"
@@ -698,6 +891,35 @@ class EditorialContractTests(unittest.TestCase):
                 self.assert_contract_error(expected_error)
         path.write_text(original, encoding="utf-8")
 
+    def test_pins_every_canonical_registry_entry_field(self) -> None:
+        path = self.fixture_root / "value-repos.json"
+        original = path.read_text(encoding="utf-8")
+        mutations = (
+            ('"tier": "ranked"', '"tier": "unranked"'),
+            ('"discovered": "2026-06-22"', '"discovered": "unknown"'),
+            (
+                '"value_thesis": "Only repo in the estate',
+                '"value_thesis": "Unreviewed replacement',
+            ),
+            (
+                '"first_task": "Ship a standalone',
+                '"first_task": "Ignore the executable plan',
+            ),
+            ('"discovery_doc": "DISCOVERY.md"', '"discovery_doc": "MISSING.md"'),
+            (
+                '"tier": "ranked",',
+                '"tier": "ranked",\n      "unreviewed": true,',
+            ),
+        )
+        for current, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("canonical registry entry must match")
+        path.write_text(original, encoding="utf-8")
+
     def test_rejects_missing_or_unclassified_schema_files(self) -> None:
         required_schema_files = (
             "category-taxonomy.yaml",
@@ -725,6 +947,26 @@ class EditorialContractTests(unittest.TestCase):
         nested.write_text("schema_version: '1.0'\n", encoding="utf-8")
         self.assert_contract_error("schema inventory mismatch")
 
+    def test_rejects_every_unclassified_or_symlinked_template_artifact(self) -> None:
+        for relative_path in (
+            "templates/audiences/rogue.markdown",
+            "templates/audiences/rogue.mdx",
+            "templates/rogue.txt",
+        ):
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                path.write_text("Conflicting ungoverned template.\n", encoding="utf-8")
+                self.assert_contract_error("unclassified template files")
+                path.unlink()
+
+        path = self.fixture_root / "templates/guide.md"
+        original = path.read_text(encoding="utf-8")
+        path.unlink()
+        path.symlink_to("/etc/passwd")
+        self.assert_contract_error("required contained regular publication template")
+        path.unlink()
+        path.write_text(original, encoding="utf-8")
+
     def test_rejects_empty_required_schema(self) -> None:
         path = self.fixture_root / "schemas/reader-mode-rubric.yaml"
         path.write_text("", encoding="utf-8")
@@ -745,6 +987,56 @@ class EditorialContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.assert_contract_error("schema needs a nonempty description")
+
+    def test_requires_exact_unique_rendered_readme_h2_sections(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        headings = (
+            "## Essay Categories",
+            "## Quality Rubric",
+            "## Frontmatter Schema",
+            "## Development",
+        )
+        for heading in headings:
+            self.assertEqual(1, original.splitlines().count(heading))
+            for replacement in (
+                f"Not a heading: {heading}",
+                f"{heading} amended",
+                f"{heading}\n{heading}",
+                f"<!--\n{heading}\n-->",
+                f"```markdown\n{heading}\n```",
+            ):
+                with self.subTest(heading=heading, replacement=replacement):
+                    path.write_text(
+                        original.replace(heading, replacement, 1),
+                        encoding="utf-8",
+                    )
+                    self.assert_contract_error(
+                        f"heading {heading!r} must appear exactly once"
+                    )
+                    path.write_text(original, encoding="utf-8")
+
+    def test_ignores_fake_development_commands_inside_raw_html(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        heading = "## Development"
+        start = original.index(heading)
+        end = original.index("\n## Contributing", start)
+        fake_section = original[start:end]
+        install = (
+            "python3 -m pip install --require-hashes --only-binary=:all: "
+            "-r requirements-ci.txt"
+        )
+        self.assertEqual(1, original.count(install))
+        attacked = (
+            "<div>\n"
+            + fake_section
+            + "\n</div>\n\n"
+            + original.replace(install, "python3 -m pip --version", 1)
+        )
+        path.write_text(attacked, encoding="utf-8")
+
+        self.assert_contract_error("missing local CI reproduction command")
 
     def test_rejects_missing_local_ci_reproduction_command(self) -> None:
         path = self.fixture_root / "README.md"
@@ -769,16 +1061,35 @@ class EditorialContractTests(unittest.TestCase):
 
     def test_requires_license_and_fail_closed_structure_checks(self) -> None:
         license_path = self.fixture_root / "LICENSE"
+        license_content = license_path.read_text(encoding="utf-8")
         self.assertTrue(license_path.is_file())
         license_path.unlink()
-        self.assert_contract_error("required repository license file is missing")
+        self.assert_contract_error("canonical license file is missing")
+        license_path.write_text(license_content, encoding="utf-8")
+
+        license_path.unlink()
+        license_path.symlink_to("/etc/passwd")
+        self.assert_contract_error("canonical license file is missing")
+        license_path.unlink()
+        license_path.write_text(license_content, encoding="utf-8")
+
+        license_path.write_text("", encoding="utf-8")
+        self.assert_contract_error("canonical license file is missing")
+        license_path.write_text(license_content + "\n", encoding="utf-8")
+        self.assert_contract_error("canonical license file is missing")
+        license_path.write_text(license_content, encoding="utf-8")
 
         readme_path = self.fixture_root / "README.md"
         workflow_path = self.fixture_root / ".github/workflows/ci.yml"
         readme = readme_path.read_text(encoding="utf-8")
         workflow = workflow_path.read_text(encoding="utf-8")
         command = (
-            'test -f "LICENSE" && echo "::notice::License file found" || exit 1'
+            'test -f "LICENSE" && ! test -L "LICENSE" && test -s "LICENSE" && '
+            'python3 -c "import hashlib,pathlib,sys; p=pathlib.Path(\'LICENSE\'); '
+            "sys.exit(0 if hashlib.sha256(p.read_bytes()).hexdigest() == "
+            "'65bfcf3e7864ed904700d0f80159399d07faf071600c194f0c9152d653012f3d' "
+            'else 1)" && echo '
+            '"::notice::License file found" || exit 1'
         )
         self.assertIn(command, readme)
         self.assertIn(command, workflow)
@@ -797,10 +1108,31 @@ class EditorialContractTests(unittest.TestCase):
         )
         self.assert_contract_error("structure validation command must fail closed")
 
+    def test_rejects_symlinked_workflow_and_schema_trust_inputs(self) -> None:
+        cases = (
+            (".github/workflows/ci.yml", "workflow-copy.yml"),
+            ("schemas/frontmatter-schema.yaml", "frontmatter-copy.yaml"),
+        )
+        for relative_path, backup_name in cases:
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                backup = self.fixture_root / backup_name
+                backup.write_text(original, encoding="utf-8")
+                path.unlink()
+                path.symlink_to(backup)
+                self.assert_contract_error("required contained regular YAML file")
+                path.unlink()
+                path.write_text(original, encoding="utf-8")
+                backup.unlink()
+
     def test_requires_local_ci_commands_once_and_in_hosted_order(self) -> None:
         path = self.fixture_root / "README.md"
         original = path.read_text(encoding="utf-8")
-        install = "python3 -m pip install pyyaml"
+        install = (
+            "python3 -m pip install --require-hashes --only-binary=:all: "
+            "-r requirements-ci.txt"
+        )
         unit_tests = "python3 -m unittest discover -s tests -v"
 
         reordered = (
@@ -817,6 +1149,89 @@ class EditorialContractTests(unittest.TestCase):
         )
         self.assert_contract_error("duplicate local CI reproduction command")
         path.write_text(original, encoding="utf-8")
+
+    def test_rejects_unclassified_or_bypassed_local_recipe_commands(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        validation = "python3 scripts/validate_editorial_contracts.py"
+        mutations = (
+            original.replace(
+                validation,
+                "git checkout origin/main -- scripts tests\n" + validation,
+                1,
+            ),
+            original.replace(validation, validation + " || true", 1),
+            original.replace(
+                "Before committing, also run",
+                "```bash\ngit status --short\n```\n\nBefore committing, also run",
+                1,
+            ),
+            original.replace(
+                "Before committing, also run",
+                "```sh\ngit checkout origin/main -- scripts tests\n```\n\n"
+                "Before committing, also run",
+                1,
+            ),
+            original.replace(
+                "Before committing, also run",
+                "```\ngit checkout origin/main -- scripts tests\n```\n\n"
+                "Before committing, also run",
+                1,
+            ),
+            original.replace(
+                "Before committing, also run",
+                "    git checkout origin/main -- scripts tests\n\n"
+                "Before committing, also run",
+                1,
+            ),
+            original.replace(
+                "Before committing, also run",
+                "<pre><code>git checkout origin/main -- scripts tests"
+                "</code></pre>\n\nBefore committing, also run",
+                1,
+            ),
+            original.replace(
+                "Before committing, also run",
+                "<details>\n<summary>Alternate recipe</summary>\n"
+                "<pre><code>git checkout origin/main -- scripts tests"
+                "</code></pre>\n</details>\n\nBefore committing, also run",
+                1,
+            ),
+            original.replace(
+                "Before committing, also run",
+                "```text\n## Escape\n```\n"
+                "<pre><code>git checkout origin/main -- scripts tests"
+                "</code></pre>\n\nBefore committing, also run",
+                1,
+            ),
+            original.replace(
+                "Before committing, also run",
+                "~~~text\n## Escape\n~~~\n"
+                "<pre><code>git checkout origin/main -- scripts tests"
+                "</code></pre>\n\nBefore committing, also run",
+                1,
+            ),
+            original.replace(
+                "Before committing, also run",
+                "`\n## Escape\n`\n"
+                "<pre><code>git checkout origin/main -- scripts tests"
+                "</code></pre>\n\nBefore committing, also run",
+                1,
+            ),
+        )
+        for mutated in mutations:
+            with self.subTest(mutation=mutated[len(original) : len(original) + 80]):
+                path.write_text(mutated, encoding="utf-8")
+                self.assert_contract_error(
+                    "Development"
+                )
+                path.write_text(original, encoding="utf-8")
+
+        path.write_text(
+            original.replace(validation, "# exact-head validation\n" + validation, 1),
+            encoding="utf-8",
+        )
+        self.assertEqual([], validate(self.fixture_root))
 
     def test_binds_complete_multiline_yaml_command_to_hosted_ci(self) -> None:
         readme_path = self.fixture_root / "README.md"
@@ -1028,6 +1443,143 @@ class EditorialContractTests(unittest.TestCase):
         )
         self.assert_contract_error("validate job mapping must contain exactly")
 
+    def test_pins_hosted_workflow_trust_envelope_and_job_inventory(self) -> None:
+        path = self.fixture_root / ".github/workflows/ci.yml"
+        original = path.read_text(encoding="utf-8")
+        permissions = "permissions:\n  contents: read\n"
+        self.assertIn(permissions, original)
+        mutations = (
+            (permissions, ""),
+            (permissions, "permissions: write-all\n"),
+            (permissions, "permissions:\n  contents: write\n"),
+            (
+                permissions,
+                "permissions:\n  contents: read\n  pull-requests: write\n",
+            ),
+            ("on:\n", "true:\n"),
+            ("name: Editorial Standards CI", "name: Redirected check"),
+            ("jobs:\n", "concurrency: bypass\njobs:\n"),
+            (
+                "jobs:\n  validate:\n",
+                "jobs:\n  bypass:\n    runs-on: ubuntu-latest\n"
+                "    steps: []\n  validate:\n",
+            ),
+        )
+        for current, replacement in mutations:
+            with self.subTest(replacement=replacement.strip() or "deleted"):
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                errors = validate(self.fixture_root)
+                self.assertTrue(
+                    any(
+                        marker in error
+                        for marker in (
+                            "workflow mapping must contain exactly",
+                            "source top-level keys/order must be exactly",
+                            "workflow name must be exactly",
+                            "workflow permissions must be exactly",
+                            "job inventory must contain exactly",
+                        )
+                        for error in errors
+                    ),
+                    errors,
+                )
+                path.write_text(original, encoding="utf-8")
+
+    def test_pins_every_hosted_step_mapping_and_preparation_action(self) -> None:
+        path = self.fixture_root / ".github/workflows/ci.yml"
+        original = path.read_text(encoding="utf-8")
+        checkout = (
+            "      - name: Checkout code\n"
+            "        uses: actions/checkout@"
+            "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n"
+        )
+        setup = (
+            "      - name: Set up Python\n"
+            "        uses: actions/setup-python@"
+            "5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0\n"
+            "        with:\n"
+            "          python-version: \"3.12\"\n"
+        )
+        install = (
+            "      - name: Install dependencies\n"
+            "        run: 'python3 -m pip install --require-hashes "
+            "--only-binary=:all: -r requirements-ci.txt'\n"
+        )
+        mutations = (
+            (
+                checkout,
+                checkout + "        with:\n          ref: main\n",
+            ),
+            (
+                checkout,
+                checkout + "        with:\n          path: trusted\n",
+            ),
+            (
+                checkout,
+                checkout + "        with:\n          fetch-depth: 0\n",
+            ),
+            (
+                checkout,
+                checkout.replace(
+                    "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
+                    "v7",
+                ),
+            ),
+            (
+                setup,
+                setup.replace('python-version: "3.12"', 'python-version: "3.13"'),
+            ),
+            (
+                setup,
+                setup + "          cache: pip\n",
+            ),
+            (
+                install,
+                install.replace("--require-hashes ", ""),
+            ),
+            (
+                install,
+                install.replace("-r requirements-ci.txt", "PyYAML"),
+            ),
+        )
+        for current, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error(
+                    "steps must match the exact canonical mappings"
+                )
+                path.write_text(original, encoding="utf-8")
+
+    def test_requires_exact_hash_verified_ci_dependency_lock(self) -> None:
+        lock_path = self.fixture_root / "requirements-ci.txt"
+        original = lock_path.read_text(encoding="utf-8")
+        self.assertIn("PyYAML==6.0.3", original)
+        self.assertIn("--hash=sha256:", original)
+        mutations = (
+            original.replace("PyYAML==6.0.3", "PyYAML==6.0.2", 1),
+            original.replace("    --hash=sha256:", "    # hash removed: ", 1),
+            original + "requests==2.32.5\n",
+        )
+        for mutated in mutations:
+            with self.subTest(mutation=mutated.splitlines()[-1]):
+                lock_path.write_text(mutated, encoding="utf-8")
+                self.assert_contract_error(
+                    "dependency lock must exactly pin the canonical PyYAML artifacts"
+                )
+                lock_path.write_text(original, encoding="utf-8")
+
+        lock_path.unlink()
+        self.assert_contract_error("required contained regular CI dependency lock")
+
+        lock_path.symlink_to("/etc/passwd")
+        self.assert_contract_error("required contained regular CI dependency lock")
+
     def test_rejects_protected_hosted_ci_execution_controls(self) -> None:
         path = self.fixture_root / ".github/workflows/ci.yml"
         original = path.read_text(encoding="utf-8")
@@ -1132,6 +1684,19 @@ class EditorialContractTests(unittest.TestCase):
         self.assertTrue(any("missing required template marker" in error for error in errors))
         self.assertTrue(any("missing canonical project link" in error for error in errors))
 
+    def test_rejects_backticks_in_backtick_fence_info_strings(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        opening = "```bash\n"
+        self.assertIn(opening, original)
+        path.write_text(
+            original.replace(opening, "```bash `not-commonmark`\n", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error(
+            "Development bash recipe must match the exact canonical executable blocks"
+        )
+
     def test_rejects_html_commented_reader_structure_and_canonical_link(self) -> None:
         path = self.fixture_root / "templates/audiences/general.md"
         original = path.read_text(encoding="utf-8")
@@ -1216,6 +1781,112 @@ class EditorialContractTests(unittest.TestCase):
 
         path.write_text(original + "\n`\nunclosed span\n", encoding="utf-8")
         self.assert_contract_error("unclosed Markdown inline-code span")
+
+    def test_block_html_comment_suffix_cannot_supply_markdown_contracts(self) -> None:
+        mutations = (
+            (
+                "templates/audiences/general.md",
+                "## What is this?",
+                "<!-- hidden -->## What is this?",
+                "missing required template marker",
+            ),
+            (
+                "templates/repository-readme-v2.md",
+                "| **What it is** | [Canonical definition] |",
+                "<!-- hidden -->| **What it is** | [Canonical definition] |",
+                "has no data rows",
+            ),
+            (
+                "templates/audiences/general.md",
+                "- [Canonical README](../../README.md)",
+                "<!-- hidden -->- [Canonical README](../../README.md)",
+                "missing canonical project link",
+            ),
+            (
+                "templates/audiences/general.md",
+                "## What is this?",
+                "<!-- hidden\n-->## What is this?",
+                "missing required template marker",
+            ),
+        )
+        for relative_path, current, replacement, expected in mutations:
+            with self.subTest(path=relative_path, replacement=replacement):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error(expected)
+                path.write_text(original, encoding="utf-8")
+
+        path = self.fixture_root / "templates/audiences/general.md"
+        original = path.read_text(encoding="utf-8")
+        path.write_text(
+            original + "\nOrdinary prose <!-- explanatory note --> remains prose.\n",
+            encoding="utf-8",
+        )
+        self.assertEqual([], validate(self.fixture_root))
+
+    def test_backtick_run_search_does_not_slice_rejected_suffixes(self) -> None:
+        class NoSliceString(str):
+            def __getitem__(self, key: object) -> str:
+                if isinstance(key, slice):
+                    raise AssertionError("backtick search sliced an input suffix")
+                return super().__getitem__(key)
+
+        adversarial = NoSliceString("`` " * 100_000)
+        self.assertEqual(-1, _find_backtick_run(adversarial, 0, 1))
+
+    def test_many_inline_code_spans_do_not_rescan_for_absent_comments(self) -> None:
+        class CommentScanCountingString(str):
+            comment_search_suffix = 0
+
+            def find(
+                self,
+                sub: str,
+                start: int = 0,
+                end: int | None = None,
+            ) -> int:
+                if sub == "<!--":
+                    effective_end = len(self) if end is None else end
+                    self.comment_search_suffix += effective_end - start
+                if end is None:
+                    return super().find(sub, start)
+                return super().find(sub, start, end)
+
+        adversarial = CommentScanCountingString("`x`a" * 50_000)
+        rendered, in_comment, inline_length = _strip_html_comments_from_line(
+            adversarial,
+            False,
+            0,
+        )
+        self.assertEqual(adversarial, rendered)
+        self.assertFalse(in_comment)
+        self.assertEqual(0, inline_length)
+        self.assertEqual(0, adversarial.comment_search_suffix)
+
+    def test_many_inline_triple_backticks_do_not_slice_growing_prefixes(self) -> None:
+        class NoGrowingPrefixSliceString(str):
+            def __getitem__(self, key: object) -> str:
+                if (
+                    isinstance(key, slice)
+                    and key.start is None
+                    and isinstance(key.stop, int)
+                    and key.stop > 3
+                ):
+                    raise AssertionError("Markdown scan sliced a growing prefix")
+                return super().__getitem__(key)
+
+        adversarial = NoGrowingPrefixSliceString("a```x```" * 50_000)
+        rendered, in_comment, inline_length = _strip_html_comments_from_line(
+            adversarial,
+            False,
+            0,
+        )
+        self.assertEqual(adversarial, rendered)
+        self.assertFalse(in_comment)
+        self.assertEqual(0, inline_length)
 
     def test_multiline_inline_code_suffix_cannot_supply_block_structure(self) -> None:
         mutations = (
@@ -1485,6 +2156,38 @@ class EditorialContractTests(unittest.TestCase):
                 self.assert_contract_error(expected_error)
                 path.write_text(original, encoding="utf-8")
 
+    def test_rejects_nonstring_taxonomy_and_rubric_dimension_keys(self) -> None:
+        mutations = (
+            (
+                "schemas/category-taxonomy.yaml",
+                "categories:\n",
+                "categories:\n  7:\n    description: Invalid category.\n",
+                "categories: keys must be nonempty strings",
+            ),
+            (
+                "schemas/reader-mode-rubric.yaml",
+                "dimensions:\n",
+                "dimensions:\n  7:\n    question: Invalid dimension.\n",
+                "dimensions: keys must be nonempty strings",
+            ),
+            (
+                "schemas/quality-rubric.yaml",
+                "dimensions:\n",
+                "dimensions:\n  7:\n    max_points: 0\n",
+                "dimensions: keys must be nonempty strings",
+            ),
+        )
+        for relative_path, anchor, replacement, expected_error in mutations:
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(anchor, original)
+                path.write_text(
+                    original.replace(anchor, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error(expected_error)
+                path.write_text(original, encoding="utf-8")
+
     def test_rejects_incomplete_or_hidden_reader_mode_standard(self) -> None:
         path = self.fixture_root / "docs/reader-mode-documentation.md"
         original = path.read_text(encoding="utf-8")
@@ -1517,6 +2220,171 @@ class EditorialContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.assert_contract_error("canonical reader rubric link")
+
+    def test_binds_no_silent_claim_drift_policies(self) -> None:
+        mutations = (
+            (
+                "docs/reader-mode-documentation.md",
+                "They may not silently change those facts.",
+                "They may silently change those facts.",
+            ),
+            (
+                "templates/evidence.md",
+                "may not change an\nassertion's statement",
+                "may change an\nassertion's statement",
+            ),
+        )
+        for relative_path, current, inverted in mutations:
+            path = self.fixture_root / relative_path
+            original = path.read_text(encoding="utf-8")
+            self.assertIn(current, original)
+            for replacement in ("", inverted, f"<!--\n{current}\n-->"):
+                with self.subTest(path=relative_path, replacement=replacement):
+                    path.write_text(
+                        original.replace(current, replacement, 1), encoding="utf-8"
+                    )
+                    self.assert_contract_error("canonical claim-boundary policy")
+                    path.write_text(original, encoding="utf-8")
+
+        moved_policies = (
+            (
+                "docs/reader-mode-documentation.md",
+                "Audience pages may change order, terminology, examples, assumed "
+                "knowledge, and\nthe evidence they foreground. They may not silently "
+                "change those facts.",
+                "Audience pages may change order, terminology, examples, assumed "
+                "knowledge, and\nthe evidence they foreground. They may silently "
+                "change those facts.",
+            ),
+            (
+                "templates/evidence.md",
+                "Audience pages may foreground different rows but may not change an\n"
+                "assertion's statement, class, verification state, freshness, or evidence.",
+                "Audience pages may foreground different rows and may change an\n"
+                "assertion's statement, class, verification state, freshness, or evidence.",
+            ),
+        )
+        for relative_path, canonical, inverted in moved_policies:
+            with self.subTest(path=relative_path, mutation="moved-decoy"):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(canonical, original)
+                path.write_text(
+                    original.replace(canonical, inverted, 1)
+                    + f"\n## Unrelated decoy\n\n{canonical}\n",
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("canonical claim-boundary policy")
+                path.write_text(original, encoding="utf-8")
+
+                path.write_text(
+                    original.replace(canonical, inverted, 1)
+                    + f"\n`{canonical.replace(chr(10), ' ')}`\n",
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("canonical claim-boundary policy")
+                path.write_text(original, encoding="utf-8")
+
+        additive_inversions = (
+            (
+                "docs/reader-mode-documentation.md",
+                "They may not silently change those facts.",
+                "Audience pages may silently change those facts.",
+            ),
+            (
+                "templates/evidence.md",
+                "assertion's statement, class, verification state, freshness, or evidence.",
+                "Audience pages may change an assertion's statement, class, "
+                "verification state, freshness, or evidence.",
+            ),
+        )
+        for relative_path, anchor, contradiction in additive_inversions:
+            with self.subTest(path=relative_path, mutation="additive-contradiction"):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(anchor, original)
+                path.write_text(
+                    original.replace(anchor, f"{anchor} {contradiction}", 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("contradictory claim-boundary policy")
+
+    def test_pins_normative_schema_links_to_the_reviewed_merge(self) -> None:
+        mutations = (
+            (
+                "README.md",
+                "schemas/project-record-v1.schema.json",
+                "schemas/does-not-exist.schema.json",
+            ),
+            (
+                "docs/reader-mode-documentation.md",
+                "schemas/assertion-evidence.v1.schema.json",
+                "schemas/does-not-exist.schema.json",
+            ),
+            (
+                "docs/reader-mode-documentation.md",
+                "github.com/organvm-iv-taxis/schema-definitions",
+                "github.com/meta-organvm/schema-definitions",
+            ),
+            (
+                "README.md",
+                "blob/2c2b7c8b0e841a4abde82230be88524d43f9b3c2/",
+                "blob/main/",
+            ),
+        )
+        for relative_path, current, replacement in mutations:
+            with self.subTest(path=relative_path, replacement=replacement):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("canonical schema URL inventory mismatch")
+                path.write_text(original, encoding="utf-8")
+
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        canonical_url = (
+            "https://github.com/organvm-iv-taxis/schema-definitions/blob/"
+            "2c2b7c8b0e841a4abde82230be88524d43f9b3c2/"
+            "schemas/project-record-v1.schema.json"
+        )
+        canonical_link = f"[project-record schema]({canonical_url})"
+        self.assertIn(canonical_link, original)
+        path.write_text(
+            original.replace(
+                canonical_link,
+                "[project-record schema](https://evil.example/redirect)",
+                1,
+            )
+            + f"\nCanonical-looking plain-text decoy: {canonical_url}\n",
+            encoding="utf-8",
+        )
+        self.assert_contract_error("canonical schema link must appear exactly once")
+
+        for decoy in (
+            f"`{canonical_link}`",
+            f"!{canonical_link}",
+            f"\\{canonical_link}",
+            f'<span data-link="{canonical_link}">decoy</span>',
+            f'<span title="> {canonical_link}">decoy</span>',
+            f'[outer](https://example.com "{canonical_link}")',
+            f"![prefix {canonical_link} suffix](image.png)",
+        ):
+            with self.subTest(decoy=decoy[:20]):
+                path.write_text(
+                    original.replace(
+                        canonical_link,
+                        "[project-record schema](https://evil.example/redirect)",
+                        1,
+                    )
+                    + f"\n{decoy}\n",
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(
+                    "canonical schema link must appear exactly once"
+                )
 
     def test_rejects_incomplete_quality_rubric_contract(self) -> None:
         path = self.fixture_root / "schemas/quality-rubric.yaml"
@@ -1639,6 +2507,31 @@ class EditorialContractTests(unittest.TestCase):
         )
 
         self.assert_contract_error("outside the schema enum")
+
+    def test_reports_scalar_enums_without_crashing_value_validation(self) -> None:
+        mutations = (
+            (
+                "schemas/frontmatter-schema.yaml",
+                "    enum: [essay]\n",
+                "    enum: 7\n",
+            ),
+            (
+                "schemas/log-schema.yaml",
+                "    enum: [focused, exploratory, reflective, frustrated, "
+                "breakthrough, routine]\n",
+                "    enum: 7\n",
+            ),
+        )
+        for relative_path, current, replacement in mutations:
+            with self.subTest(path=relative_path):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("enum must be a nonempty list")
+                path.write_text(original, encoding="utf-8")
 
     def test_applies_log_integer_maximum_and_handles_invalid_bounds(self) -> None:
         schema_path = self.fixture_root / "schemas/log-schema.yaml"
@@ -2096,6 +2989,75 @@ class EditorialContractTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 self.assert_contract_error("found 2")
+                path.write_text(original, encoding="utf-8")
+
+                for opening, closing in (("<!--", "-->"), ("```markdown", "```")):
+                    with self.subTest(path=relative_path, hidden_by=opening):
+                        path.write_text(
+                            original.replace(
+                                canonical,
+                                f"{opening}\n{canonical}\n{closing}",
+                                1,
+                            ),
+                            encoding="utf-8",
+                        )
+                        self.assert_contract_error("canonical identity line")
+                        path.write_text(original, encoding="utf-8")
+
+    def test_pins_seed_production_edges_and_generated_edge_parity(self) -> None:
+        seed_path = self.fixture_root / "seed.yaml"
+        original_seed = seed_path.read_text(encoding="utf-8")
+        produces_start = original_seed.index("produces:\n")
+        consumes_start = original_seed.index("consumes:\n")
+        production_block = original_seed[produces_start:consumes_start]
+        mutations = (
+            "produces: []\n\n",
+            production_block.replace("editorial-governance", "unknown-contract", 1),
+            production_block.replace("public-process", "unreviewed-consumer", 1),
+            production_block.replace("defines-schema-for", "advises", 1),
+        )
+        for replacement in mutations:
+            with self.subTest(seed_replacement=replacement):
+                seed_path.write_text(
+                    original_seed.replace(production_block, replacement, 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("seed.yaml: expected produces=")
+        seed_path.write_text(original_seed, encoding="utf-8")
+
+        generated_lines = (
+            ("AGENTS.md", "- **Produce** `editorial-governance` for ORGAN-V"),
+            ("AGENTS.md", "- **Produce** `frontmatter-schema` for ORGAN-V"),
+            ("AGENTS.md", "- **Produce** `essay-templates` for ORGAN-V"),
+            (
+                "CLAUDE.md",
+                "- **Produces** → `ORGAN-V`: editorial-governance",
+            ),
+            (
+                "CLAUDE.md",
+                "- **Produces** → `ORGAN-V`: frontmatter-schema",
+            ),
+            ("CLAUDE.md", "- **Produces** → `ORGAN-V`: essay-templates"),
+            (
+                "GEMINI.md",
+                "- **Produces** → `ORGAN-V`: editorial-governance",
+            ),
+            (
+                "GEMINI.md",
+                "- **Produces** → `ORGAN-V`: frontmatter-schema",
+            ),
+            ("GEMINI.md", "- **Produces** → `ORGAN-V`: essay-templates"),
+        )
+        for relative_path, canonical in generated_lines:
+            with self.subTest(path=relative_path, edge=canonical):
+                path = self.fixture_root / relative_path
+                original = path.read_text(encoding="utf-8")
+                self.assertEqual(1, original.splitlines().count(canonical))
+                path.write_text(
+                    original.replace(canonical, "- **Produces** hidden drift", 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("canonical identity line")
                 path.write_text(original, encoding="utf-8")
 
     def test_rejects_string_instead_of_essay_list(self) -> None:

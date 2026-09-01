@@ -91,9 +91,9 @@ pages and speculative industry catalogs are contract violations, not coverage.
 
 `project-record.yml` is the shared factual substrate. It is validated by the
 canonical
-[`project-record-v1.schema.json`](https://github.com/organvm-iv-taxis/schema-definitions/blob/main/schemas/project-record-v1.schema.json)
+[`project-record-v1.schema.json`](https://github.com/organvm-iv-taxis/schema-definitions/blob/2c2b7c8b0e841a4abde82230be88524d43f9b3c2/schemas/project-record-v1.schema.json)
 contract. Material claims resolve to separate
-[`assertion-evidence.v1`](https://github.com/organvm-iv-taxis/schema-definitions/blob/main/schemas/assertion-evidence.v1.schema.json)
+[`assertion-evidence.v1`](https://github.com/organvm-iv-taxis/schema-definitions/blob/2c2b7c8b0e841a4abde82230be88524d43f9b3c2/schemas/assertion-evidence.v1.schema.json)
 records rather than duplicating mutable claim text and verification state.
 At minimum it records:
 

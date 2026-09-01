@@ -41,9 +41,9 @@ business, and evaluator readers through the same rhetorical sequence. ORGANVM's
 - a seven-dimension audit rubric for conversion planning;
 - factual CI failures versus editorial warnings.
 
-Start with the [canonical project-record example](https://github.com/organvm-iv-taxis/schema-definitions/blob/main/examples/project-record-v1-example.yaml),
+Start with the [canonical project-record example](https://github.com/organvm-iv-taxis/schema-definitions/blob/2c2b7c8b0e841a4abde82230be88524d43f9b3c2/examples/project-record-v1-example.yaml),
 [README v2 template](templates/repository-readme-v2.md), and
-[project-record schema](https://github.com/organvm-iv-taxis/schema-definitions/blob/main/schemas/project-record-v1.schema.json).
+[project-record schema](https://github.com/organvm-iv-taxis/schema-definitions/blob/2c2b7c8b0e841a4abde82230be88524d43f9b3c2/schemas/project-record-v1.schema.json).
 
 ## The Voice
 
@@ -302,10 +302,11 @@ git clone https://github.com/organvm/editorial-standards.git
 cd editorial-standards
 ```
 
-Install the one Python dependency:
+Install the one Python dependency from the exact, hash-verified lock used by
+hosted CI:
 
 ```bash
-python3 -m pip install pyyaml
+python3 -m pip install --require-hashes --only-binary=:all: -r requirements-ci.txt
 ```
 
 Run the same YAML, editorial-contract, adversarial-regression, and structure
@@ -332,9 +333,10 @@ print(f'All {len(glob.glob(\"schemas/*.yaml\"))} schema files valid')
 "
 python3 scripts/validate_editorial_contracts.py
 python3 -m unittest discover -s tests -v
-test -f "README.md" && echo "::notice::README.md found" || exit 1
-test -f "LICENSE" && echo "::notice::License file found" || exit 1
-test -f "docs/reader-mode-documentation.md" && echo "::notice::Reader-mode standard found" || exit 1
+test -f "README.md" && ! test -L "README.md" && echo "::notice::README.md found" || exit 1
+test -f "LICENSE" && ! test -L "LICENSE" && test -s "LICENSE" && python3 -c "import hashlib,pathlib,sys; p=pathlib.Path('LICENSE'); sys.exit(0 if hashlib.sha256(p.read_bytes()).hexdigest() == '65bfcf3e7864ed904700d0f80159399d07faf071600c194f0c9152d653012f3d' else 1)" && echo "::notice::License file found" || exit 1
+test -f "requirements-ci.txt" && ! test -L "requirements-ci.txt" && echo "::notice::CI requirements lock found" || exit 1
+test -f "docs/reader-mode-documentation.md" && ! test -L "docs/reader-mode-documentation.md" && echo "::notice::Reader-mode standard found" || exit 1
 ```
 
 Before committing, also run the Python and whitespace static checks:
@@ -350,6 +352,7 @@ git diff --check
 editorial-standards/
   README.md              # This file
   LICENSE                # MIT License
+  requirements-ci.txt    # Exact hash-verified CI dependency lock
   seed.yaml              # Automation contract
   CHANGELOG.md           # Release history
   .github/
