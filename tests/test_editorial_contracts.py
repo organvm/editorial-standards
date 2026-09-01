@@ -110,6 +110,55 @@ class EditorialContractTests(unittest.TestCase):
 
         self.assert_contract_error("frontmatter table/schema field order mismatch")
 
+    def test_binds_optional_frontmatter_table_to_the_schema(self) -> None:
+        readme_path = self.fixture_root / "README.md"
+        schema_path = self.fixture_root / "schemas/frontmatter-schema.yaml"
+        original_readme = readme_path.read_text(encoding="utf-8")
+        original_schema = schema_path.read_text(encoding="utf-8")
+        first = (
+            "| `word_count_policy` | enum | `computed` or `external` |"
+        )
+        second = (
+            "| `word_count_override_reason` | string | 20–300 characters |"
+        )
+        self.assertIn(f"{first}\n{second}", original_readme)
+
+        mutations = (
+            (
+                schema_path,
+                original_schema[: original_schema.index("optional_fields:")]
+                + "optional_fields: {}\n",
+                "optional frontmatter table/schema mismatch",
+            ),
+            (
+                readme_path,
+                original_readme.replace(f"{first}\n", "", 1),
+                "optional frontmatter table/schema mismatch",
+            ),
+            (
+                readme_path,
+                original_readme.replace(
+                    f"{first}\n{second}", f"{second}\n{first}", 1
+                ),
+                "optional frontmatter table/schema field order mismatch",
+            ),
+            (
+                schema_path,
+                original_schema.replace(
+                    "enum: [computed, external]",
+                    "enum: [computed, external, waived]",
+                    1,
+                ),
+                "optional frontmatter table/schema cells mismatch",
+            ),
+        )
+        for path, attacked, expected_error in mutations:
+            with self.subTest(path=path.name, expected_error=expected_error):
+                path.write_text(attacked, encoding="utf-8")
+                self.assert_contract_error(expected_error)
+                readme_path.write_text(original_readme, encoding="utf-8")
+                schema_path.write_text(original_schema, encoding="utf-8")
+
     def test_rejects_unrepresented_additive_frontmatter_rule(self) -> None:
         path = self.fixture_root / "schemas/frontmatter-schema.yaml"
         original = path.read_text(encoding="utf-8")
@@ -1111,6 +1160,54 @@ class EditorialContractTests(unittest.TestCase):
             reader + "\n- Decoy title\n  ===========\n",
             reader + "\n1. # Decoy title\n",
             reader + "\n<h1>Decoy title</h1>\n",
+            reader + "\nParagraph prefix <h1>Decoy title</h1>\n",
+            reader + '\nParagraph prefix <H1 class="decoy">Title</H1>\n',
+            reader + "\nParagraph < broken <h1>Decoy title</h1>\n",
+            reader + "\nParagraph <notatag <h1>Decoy title</h1>\n",
+            reader + '\nParagraph <x "broken > <h1>Decoy title</h1>\n',
+            reader + '\n<h1\nclass="decoy">Decoy title</h1>\n',
+            reader + '\nParagraph <h1\nclass="decoy">Decoy title</h1>\n',
+            reader + "\nParagraph <h1\n>Decoy title</h1>\n",
+            reader + "\n<div>\n<h1>Decoy title</h1>\n</div>\n",
+            reader + "\n<section>\nParagraph\n<h1>Decoy title</h1>\n</section>\n",
+            reader + "\n<table>\n<tr><td><h1>Decoy title</h1></td></tr>\n</table>\n",
+            reader + "\n<div>prefix <h1>Decoy title</h1></div>\n",
+            reader + "\n<h1 bad=>Decoy title</h1>\n",
+            reader + "\n<h1 =x>Decoy title</h1>\n",
+            reader + "\n<h1 /x>Decoy title</h1>\n",
+            reader + "\n<h1 <>Decoy title</h1>\n",
+            reader + "\n<div><h1 bad=>Decoy title</h1></div>\n",
+            reader + "\n<pre>literal</pre><h1>Decoy title</h1>\n",
+            reader + "\n<pre>literal</pre><h1 bad=>Decoy title</h1>\n",
+            reader + "\n<script></script><h1>Decoy title</h1>\n",
+            reader + "\n<textarea>x</textarea><h1>Decoy title</h1>\n",
+            reader + "\n<pre>\nliteral\n</pre><h1>Decoy title</h1>\n",
+            reader + "\n<?x?><h1>Decoy title</h1>\n",
+            reader + "\n<![CDATA[x]]><h1>Decoy title</h1>\n",
+            reader + "\n<!DOCTYPE html><h1>Decoy title</h1>\n",
+            reader + "\n<!--x--><h1>Decoy title</h1>\n",
+            reader + "\n<?x\n?><h1>Decoy title</h1>\n",
+            reader + "\n- nested section\n\n    # Decoy title\n",
+            reader + "\n1. nested section\n\n    # Decoy title\n",
+            reader + "\n- outer\n  - nested section\n\n      # Decoy title\n",
+            reader + "\n- outer\n    - inner\n\n      # Decoy title\n",
+            reader + "\n- outer\n    - inner\n\n        # Decoy title\n",
+            reader + "\n- - nested section\n\n    # Decoy title\n",
+            reader + "\n* outer\n\t* inner\n\n  \t# Decoy title\n",
+            reader + "\n- outer\n\t- inner\n\n  \t# Decoy title\n",
+            reader + "\n1. outer\n   + inner\n\n    # Decoy title\n",
+            reader + "\n* outer\n   - inner\n\n    # Decoy title\n",
+            reader + "\n- outer\n   1. inner\n\n     # Decoy title\n",
+            reader + "\n> 1. outer\n>    + inner\n>\n>     # Decoy title\n",
+            reader + "\n1. outer\n    1. inner\n\n       # Decoy title\n",
+            reader + "\n> - nested section\n>\n>     # Decoy title\n",
+            reader + "\n> text\n>\n> \t# Decoy title\n",
+            reader + "\n> text\n>\n>  \t# Decoy title\n",
+            reader + "\n> Decoy title\n> \t===========\n",
+            reader + "\n> Decoy title\n>  \t===========\n",
+            reader + "\n>  12.\touter\n>\n>     \t# Decoy title\n",
+            reader + "\n>  123.\touter\n>\n>     \t# Decoy title\n",
+            reader + "\n>   1.\touter\n>\n>     \t# Decoy title\n",
         ):
             with self.subTest(scope="reader"):
                 reader_path.write_text(attacked, encoding="utf-8")
@@ -1124,6 +1221,14 @@ class EditorialContractTests(unittest.TestCase):
             "\n<!--\n# Decoy title\nDecoy\n===\n<h1>Decoy</h1>\n-->\n",
             "\n    # Indented code, not a title\n",
             "\n\\# Escaped hash, not a title\n",
+            "\nParagraph `<h1>Inline code, not a title</h1>`\n",
+            '\n<span title="<h1>Attribute text, not a title</h1>">text</span>\n',
+            "\nParagraph \\<h1>Escaped tag, not a title</h1>\n",
+            "\n<pre><h1>Literal HTML content, not a title</h1></pre>\n",
+            "\n[Destination text](<h1>)\n",
+            "\n![Image destination](<h1>)\n",
+            "\n> text\n>\n>   \t# Indented code, not a title\n",
+            "\n> Decoy text\n>   \t===========\n",
         ):
             with self.subTest(hidden=hidden):
                 reader_path.write_text(reader + hidden, encoding="utf-8")
@@ -2143,6 +2248,32 @@ class EditorialContractTests(unittest.TestCase):
                 self.assert_contract_error("tag governance/frontmatter mismatch")
                 path.write_text(original, encoding="utf-8")
 
+    def test_pins_the_nonempty_canonical_preferred_tag_vocabulary(self) -> None:
+        path = self.fixture_root / "schemas/tag-governance.yaml"
+        original = path.read_text(encoding="utf-8")
+        preferred_start = original.index("preferred_tags:\n")
+        preferred_block = original[preferred_start:]
+        first = "  - governance\n"
+        second = "  - meta-system\n"
+        self.assertIn(f"{first}{second}", preferred_block)
+        mutations = (
+            "preferred_tags: []\n",
+            preferred_block.replace(first, "", 1),
+            preferred_block.replace(
+                f"{first}{second}", f"{second}{first}", 1
+            ),
+            preferred_block.replace(first, "  - unreviewed-tag\n", 1),
+            preferred_block.replace(first, '  - ""\n', 1),
+        )
+        for replacement in mutations:
+            with self.subTest(replacement=replacement.splitlines()[0]):
+                path.write_text(
+                    original[:preferred_start] + replacement,
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("preferred_tags")
+                path.write_text(original, encoding="utf-8")
+
     def test_rejects_category_taxonomy_drift(self) -> None:
         path = self.fixture_root / "schemas/category-taxonomy.yaml"
         original = path.read_text(encoding="utf-8")
@@ -2552,11 +2683,26 @@ class EditorialContractTests(unittest.TestCase):
         mutations = (
             ("total_points: 100", "total_points: 99", "total_points must be 100"),
             (
+                "total_points: 100",
+                "total_points: 100.0",
+                "total_points must be 100 as an integer",
+            ),
+            (
+                "total_points: 100",
+                'total_points: "100"',
+                "total_points must be 100 as an integer",
+            ),
+            (
                 "  clarity:\n",
                 "  substance:\n",
                 "dimension set mismatch",
             ),
             ("    max_points: 20", "    max_points: 19", "max_points must be 20"),
+            (
+                "    max_points: 20",
+                "    max_points: 20.0",
+                "max_points must be 20 as an integer",
+            ),
             (
                 '      0: "No comprehensible argument or usable structure."',
                 "",
@@ -2565,6 +2711,11 @@ class EditorialContractTests(unittest.TestCase):
             (
                 "  flagship_candidate: 80",
                 "  flagship_candidate: 81",
+                "thresholds mismatch",
+            ),
+            (
+                "  flagship_candidate: 80",
+                "  flagship_candidate: 80.0",
                 "thresholds mismatch",
             ),
         )
@@ -3333,6 +3484,63 @@ class EditorialContractTests(unittest.TestCase):
                 )
                 self.assert_contract_error("canonical identity line")
                 path.write_text(original, encoding="utf-8")
+
+    def test_pins_seed_subscription_and_generated_handler_parity(self) -> None:
+        seed_path = self.fixture_root / "seed.yaml"
+        agents_path = self.fixture_root / "AGENTS.md"
+        original_seed = seed_path.read_text(encoding="utf-8")
+        original_agents = agents_path.read_text(encoding="utf-8")
+        subscription_block = (
+            "subscriptions:\n"
+            "  - event: essay.published\n"
+            "    source: ORGAN-V\n"
+            '    action: "Validate published essay against quality rubric"\n'
+        )
+        handler_line = (
+            "- Event: `essay.published` → Action: Validate published essay "
+            "against quality rubric"
+        )
+        self.assertIn(subscription_block, original_seed)
+        self.assertEqual(1, original_agents.splitlines().count(handler_line))
+
+        seed_mutations = (
+            "subscriptions: []\n",
+            subscription_block.replace("essay.published", "essay.drafted", 1),
+            subscription_block.replace("source: ORGAN-V", "source: ORGAN-VI", 1),
+            subscription_block.replace("Validate published", "Skip published", 1),
+            subscription_block
+            + "  - event: essay.published\n"
+            + "    source: ORGAN-V\n"
+            + '    action: "Unreviewed duplicate"\n',
+        )
+        for replacement in seed_mutations:
+            with self.subTest(seed_replacement=replacement.splitlines()[0]):
+                seed_path.write_text(
+                    original_seed.replace(subscription_block, replacement, 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("seed.yaml: expected subscriptions=")
+                seed_path.write_text(original_seed, encoding="utf-8")
+
+        attacked_action = "Skip published essay quality validation"
+        seed_path.write_text(
+            original_seed.replace(
+                "Validate published essay against quality rubric",
+                attacked_action,
+                1,
+            ),
+            encoding="utf-8",
+        )
+        agents_path.write_text(
+            original_agents.replace(
+                "Validate published essay against quality rubric",
+                attacked_action,
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("seed.yaml: expected subscriptions=")
+        self.assert_contract_error("canonical identity line")
 
     def test_rejects_string_instead_of_essay_list(self) -> None:
         path = self.fixture_root / "templates/guide.md"

@@ -130,7 +130,14 @@ source of truth. It currently requires 12 fields:
 | `word_count` | integer | minimum 500 |
 | `references` | list | citations, or an explicit empty list |
 
-Optional word-count policy fields support externally computed aggregate counts.
+It also defines 2 optional policy fields:
+
+| Optional field | Type | Core constraint |
+|---|---|---|
+| `word_count_policy` | enum | `computed` or `external` |
+| `word_count_override_reason` | string | 20–300 characters |
+
+These optional word-count policy fields support externally computed aggregate counts.
 Downstream validators and templates must change in the same pull request as this
 schema; prose descriptions never override it.
 

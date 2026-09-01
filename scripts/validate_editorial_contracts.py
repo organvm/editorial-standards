@@ -65,6 +65,17 @@ CANONICAL_SCHEMA_DEPENDENCY = {
         "Consumes the canonical project-record and assertion-evidence schemas"
     ),
 }
+CANONICAL_SUBSCRIPTIONS = [
+    {
+        "event": "essay.published",
+        "source": "ORGAN-V",
+        "action": "Validate published essay against quality rubric",
+    }
+]
+CANONICAL_AGENT_SUBSCRIPTION_LINES = tuple(
+    f"- Event: `{subscription['event']}` → Action: {subscription['action']}"
+    for subscription in CANONICAL_SUBSCRIPTIONS
+)
 CANONICAL_PRODUCTION_EDGES = [
     {
         "type": "editorial-governance",
@@ -130,6 +141,7 @@ CANONICAL_REGISTRY_ENVELOPE = {
 }
 CANONICAL_IDENTITY_LINES = {
     Path("AGENTS.md"): (
+        *CANONICAL_AGENT_SUBSCRIPTION_LINES,
         "- **Produce** `editorial-governance` for ORGAN-V",
         "- **Produce** `frontmatter-schema` for ORGAN-V",
         "- **Produce** `essay-templates` for ORGAN-V",
@@ -183,7 +195,11 @@ CANONICAL_IDENTITY_LINES = {
     ),
 }
 IDENTITY_LINE_PREFIXES = {
-    Path("AGENTS.md"): ("- **Produce** ", "- **Consume** `schema` from "),
+    Path("AGENTS.md"): (
+        "- Event: ",
+        "- **Produce** ",
+        "- **Consume** `schema` from ",
+    ),
     Path("CHANGELOG.md"): ("[Unreleased]:", "[0.1.0]:"),
     Path("CLAUDE.md"): ("**Org:**", "- **Produces** → ", "- **Consumes** ← "),
     Path("DISCOVERY.md"): ("# Discovery:",),
@@ -515,6 +531,7 @@ CANONICAL_MAPPING_IDENTITIES = {
         "repo": CANONICAL_REPOSITORY,
         "produces": CANONICAL_PRODUCTION_EDGES,
         "consumes": [CANONICAL_SCHEMA_DEPENDENCY],
+        "subscriptions": CANONICAL_SUBSCRIPTIONS,
     },
     Path("ecosystem.yaml"): {
         "repo": CANONICAL_REPOSITORY,
@@ -557,6 +574,8 @@ FRONTMATTER_README_RULE_KEYS = {
     "reading_time": {"type", "pattern"},
     "word_count": {"type", "min"},
     "references": {"type", "min_items", "item_type"},
+    "word_count_policy": {"type", "enum"},
+    "word_count_override_reason": {"type", "min_length", "max_length"},
 }
 ESSAY_CATEGORIES = {
     Path("templates/case-study.md"): "case-study",
@@ -1035,12 +1054,63 @@ REQUIRED_READER_TABLE_SECTIONS = {
 }
 TABLE_DELIMITER_CELL = re.compile(r"^:?-{3,}:?$")
 FRONTMATTER_TABLE_HEADER = ("Field", "Type", "Core constraint")
+OPTIONAL_FRONTMATTER_TABLE_HEADER = (
+    "Optional field",
+    "Type",
+    "Core constraint",
+)
 DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
 SUPPORTED_STRING_FORMAT_PATTERNS = {"YYYY-MM-DD": DATE_PATTERN}
 TAG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
 TAG_GOVERNANCE_FORMAT = (
     "lowercase, hyphenated (e.g. 'building-in-public', not 'Building In Public')"
 )
+CANONICAL_PREFERRED_TAGS = [
+    "governance",
+    "meta-system",
+    "orchestration",
+    "infrastructure",
+    "architecture",
+    "automation",
+    "ci-cd",
+    "devops",
+    "systems-engineering",
+    "systems-design",
+    "creative-practice",
+    "creative-infrastructure",
+    "art",
+    "theory",
+    "methodology",
+    "institutional-design",
+    "portfolio",
+    "building-in-public",
+    "transparency",
+    "honesty",
+    "documentation",
+    "ai-conductor",
+    "autonomous-systems",
+    "generative-music",
+    "generative-art",
+    "game-design",
+    "commerce",
+    "organ-i",
+    "organ-ii",
+    "organ-iii",
+    "organ-iv",
+    "organ-v",
+    "organ-vi",
+    "organ-vii",
+    "retrospective",
+    "platinum-sprint",
+    "promotion-pipeline",
+    "graceful-degradation",
+    "guide",
+    "frameworks",
+    "metrics",
+    "self-assessment",
+    "anti-patterns",
+    "operational-cadence",
+]
 READING_TIME_PATTERN = r"^\d+ min$"
 PUBLICATION_TEMPLATE_SCALAR_PLACEHOLDERS = {
     "title": ("",),
@@ -1856,10 +1926,157 @@ RAW_HTML_GENERIC_START = re.compile(
     rf"|</[A-Za-z][A-Za-z0-9-]*[ \t]*>"
     rf")[ \t]*$"
 )
-RAW_HTML_H1_START = re.compile(r"^[ ]{0,3}<h1(?=[\s/>])", re.IGNORECASE)
+INLINE_HTML_TAG = re.compile(
+    rf"</?[A-Za-z][A-Za-z0-9-]*(?:{RAW_HTML_ATTRIBUTE})*[ \t]*/?>",
+    re.IGNORECASE,
+)
+MULTILINE_HTML_ATTRIBUTE = (
+    rf"[ \t\r\n]+{RAW_HTML_ATTRIBUTE_NAME}"
+    rf"(?:[ \t\r\n]*=[ \t\r\n]*{RAW_HTML_ATTRIBUTE_VALUE})?"
+)
+MULTILINE_INLINE_HTML_TAG = re.compile(
+    rf"</?[A-Za-z][A-Za-z0-9-]*(?:{MULTILINE_HTML_ATTRIBUTE})*"
+    rf"[ \t\r\n]*/?>",
+    re.IGNORECASE,
+)
+RAW_HTML_H1_TAG = re.compile(r"<h1(?=[\s/>])", re.IGNORECASE)
+RAW_HTML_H1_TOKEN = re.compile(r"<h1(?=$|[\s/>])", re.IGNORECASE)
+COMMONMARK_BLOCKQUOTE_PREFIX = re.compile(r"^(?P<indent>[ ]{0,3})>")
+COMMONMARK_LIST_ITEM_START = re.compile(
+    r"^(?P<indent>[ ]{0,3})(?P<marker>[-+*]|\d{1,9}[.)])(?P<gap>[ \t]+)"
+)
 COMMONMARK_CONTAINER_PREFIX = re.compile(
     r"^[ ]{0,3}(?:>[ \t]?|(?:[-+*]|\d{1,9}[.)])[ \t]+)"
 )
+
+
+def _strip_leading_columns(text: str, required_columns: int) -> str | None:
+    """Remove a container indent, preserving columns left by a partial tab."""
+    columns = 0
+    cursor = 0
+    for character in text:
+        if character == " ":
+            columns += 1
+        elif character == "\t":
+            columns += 4 - (columns % 4)
+        else:
+            break
+        cursor += 1
+    if columns < required_columns:
+        return None
+    return " " * (columns - required_columns) + text[cursor:]
+
+
+def _strip_blockquote_prefixes(line: str) -> str:
+    """Remove explicit CommonMark blockquote containers from one line."""
+    normalized = line
+    while (prefix := COMMONMARK_BLOCKQUOTE_PREFIX.match(normalized)) is not None:
+        cursor = prefix.end()
+        column = len(prefix.group("indent")) + 1
+        if cursor < len(normalized) and normalized[cursor] in " \t":
+            if normalized[cursor] == " ":
+                column += 1
+            else:
+                column += 4 - (column % 4)
+            cursor += 1
+        expanded: list[str] = []
+        for character in normalized[cursor:]:
+            if character == "\t":
+                tab_width = 4 - (column % 4)
+                expanded.append(" " * tab_width)
+                column += tab_width
+            else:
+                expanded.append(character)
+                column += 1
+        normalized = "".join(expanded)
+    return normalized
+
+
+def _list_item_content(line: str) -> tuple[int, str] | None:
+    """Return a CommonMark list item's continuation indent and visible content."""
+    match = COMMONMARK_LIST_ITEM_START.match(line)
+    if match is None:
+        return None
+    marker_columns = len(match.group("indent")) + len(match.group("marker"))
+    end_columns = marker_columns
+    for character in match.group("gap"):
+        if character == " ":
+            end_columns += 1
+        else:
+            end_columns += 4 - (end_columns % 4)
+    gap_columns = end_columns - marker_columns
+    # CommonMark treats one-to-four columns as the list padding. Five or more
+    # columns leave all but one as content indentation.
+    padding = gap_columns if gap_columns <= 4 else 1
+    content = line[match.end() :]
+    if gap_columns > 4:
+        content = " " * (gap_columns - 1) + content
+    return marker_columns + padding, content
+
+
+def _normalize_list_container_line(
+    line: str,
+    active_indents: list[int],
+    previous_blank: bool,
+) -> tuple[str, list[int]]:
+    """Normalize one visible line against the active CommonMark list stack."""
+    def descend(content: str, indents: list[int]) -> tuple[str, list[int]]:
+        while (nested_item := _list_item_content(content)) is not None:
+            child_indent, content = nested_item
+            indents = [*indents, indents[-1] + child_indent]
+        return content, indents
+
+    for index in range(len(active_indents) - 1, -1, -1):
+        parent_indent = active_indents[index]
+        continuation = _strip_leading_columns(line, parent_indent)
+        if continuation is None:
+            continue
+        nested_item = _list_item_content(continuation)
+        if nested_item is None:
+            return continuation, active_indents[: index + 1]
+        child_indent, content = nested_item
+        return descend(
+            content,
+            active_indents[: index + 1] + [parent_indent + child_indent],
+        )
+
+    root_item = _list_item_content(line)
+    if root_item is not None:
+        content_indent, content = root_item
+        return descend(content, [content_indent])
+
+    # An unindented nonblank line immediately after list text can be a lazy
+    # paragraph continuation. A blank boundary makes the same line leave the
+    # list and resets the continuation stack.
+    return line, [] if previous_blank else active_indents
+
+
+def _contains_visible_html_h1(line: str) -> bool:
+    """Return whether visible inline HTML contains an opening H1 start tag."""
+    angle_destinations: list[tuple[int, int]] = []
+    cursor = 0
+    while cursor < len(line):
+        destination_start = line.find("](", cursor)
+        if destination_start < 0:
+            break
+        destination_start += 2
+        while destination_start < len(line) and line[destination_start] in " \t":
+            destination_start += 1
+        if destination_start < len(line) and line[destination_start] == "<":
+            destination_end = _find_unescaped_token(line, ">", destination_start + 1)
+            if destination_end >= 0:
+                angle_destinations.append((destination_start, destination_end + 1))
+        cursor = destination_start + 1
+
+    for match in MULTILINE_INLINE_HTML_TAG.finditer(line):
+        start = match.start()
+        if _is_backslash_escaped(line, start):
+            continue
+        if any(left <= start < right for left, right in angle_destinations):
+            continue
+        if RAW_HTML_H1_TAG.match(match.group(0)):
+            return True
+    return False
 
 
 def _is_backslash_escaped(text: str, index: int) -> bool:
@@ -1930,28 +2147,8 @@ def _without_inline_code(text: str) -> str:
 
 
 def _inline_html_tag_ranges(text: str) -> list[tuple[int, int]]:
-    """Return quote-aware inline HTML tag ranges for contract-token filtering."""
-    ranges: list[tuple[int, int]] = []
-    cursor = 0
-    while cursor < len(text):
-        start = text.find("<", cursor)
-        if start < 0:
-            break
-        quote: str | None = None
-        end = start + 1
-        while end < len(text):
-            character = text[end]
-            if quote is None and character in {'"', "'"}:
-                quote = character
-            elif quote == character:
-                quote = None
-            elif quote is None and character == ">":
-                end += 1
-                break
-            end += 1
-        ranges.append((start, end))
-        cursor = end
-    return ranges
+    """Return syntactically valid inline HTML tag ranges."""
+    return [(match.start(), match.end()) for match in INLINE_HTML_TAG.finditer(text)]
 
 
 def _count_visible_markdown_link(lines: list[str], expected: str) -> int:
@@ -2005,6 +2202,8 @@ def _strip_html_comments_from_line(
         # A carried comment keeps its closing-line suffix in an existing
         # block/inline context.  Prevent that suffix from becoming a new block.
         visible.append("[html comment]")
+        if RAW_HTML_H1_TOKEN.search(line[comment_end + 3 :]):
+            visible.append("<h1>")
         cursor = comment_end + 3
         chunk_start = cursor
         in_comment = False
@@ -2032,9 +2231,19 @@ def _strip_html_comments_from_line(
             )
             if block_comment_start:
                 # A CommonMark block-position HTML comment consumes its entire
-                # physical closing line, including any same-line suffix.
+                # physical closing line, so preserve its suffix only as inline
+                # HTML evidence rather than promoting Markdown block syntax.
                 comment_end = line.find("-->", cursor + 4)
-                return "", comment_end < 0, inline_code_length
+                if comment_end < 0:
+                    return "", True, inline_code_length
+                suffix = line[comment_end + 3 :]
+                return (
+                    "<h1>"
+                    if RAW_HTML_H1_TOKEN.search(suffix)
+                    else f"[html comment]{suffix}",
+                    False,
+                    inline_code_length,
+                )
 
             visible.append(line[chunk_start:cursor])
             comment_end = line.find("-->", cursor + 4)
@@ -2091,6 +2300,9 @@ def _markdown_contract_view(
     inline_code_length = 0
     raw_html_end: re.Pattern[str] | None = None
     raw_html_until_blank = False
+    raw_html_block_lines: list[str] = []
+    active_list_indents: list[int] = []
+    previous_rendered_blank = False
 
     for line in content.splitlines():
         if fence_character is not None:
@@ -2117,12 +2329,29 @@ def _markdown_contract_view(
             continue
 
         if raw_html_end is not None:
-            if raw_html_end.search(line):
+            if (literal_end := raw_html_end.search(line)) is not None:
                 raw_html_end = None
+                literal_suffix = line[literal_end.end() :]
+                if literal_suffix:
+                    # Preserve an inline-only suffix so a real sibling HTML H1
+                    # remains visible without promoting Markdown block syntax.
+                    rendered.append(
+                        "<h1>"
+                        if RAW_HTML_H1_TOKEN.search(literal_suffix)
+                        else f"[literal suffix]{literal_suffix}"
+                    )
             continue
         if raw_html_until_blank:
             if not line.strip():
+                raw_html_block = "\n".join(raw_html_block_lines)
+                if RAW_HTML_H1_TOKEN.search(
+                    raw_html_block
+                ) or _contains_visible_html_h1(raw_html_block):
+                    rendered.append("<h1>")
                 raw_html_until_blank = False
+                raw_html_block_lines = []
+            else:
+                raw_html_block_lines.append(line)
             continue
 
         line, in_comment, inline_code_length = _strip_html_comments_from_line(
@@ -2132,7 +2361,21 @@ def _markdown_contract_view(
         )
         if not line.strip():
             rendered.append(line)
+            previous_rendered_blank = True
             continue
+
+        container_line = _strip_blockquote_prefixes(line)
+        prior_list_indents = active_list_indents
+        list_adjusted_line, active_list_indents = _normalize_list_container_line(
+            container_line,
+            active_list_indents,
+            previous_rendered_blank,
+        )
+        in_list_container = bool(active_list_indents) and (
+            active_list_indents != prior_list_indents
+            or list_adjusted_line != container_line
+        )
+        previous_rendered_blank = False
 
         if current_h2 == "## Development" and re.search(
             r"<\?|<!\[CDATA\[|<![A-Z]|</?[A-Za-z]",
@@ -2143,7 +2386,10 @@ def _markdown_contract_view(
             fenced_blocks.append((current_h2, "raw-html", line.strip()))
 
         stripped = line.lstrip()
-        if _is_indented_code_line(line):
+        if _is_indented_code_line(line) and (
+            not in_list_container
+            or _is_indented_code_line(list_adjusted_line)
+        ):
             fenced_blocks.append((current_h2, "indented", stripped))
             continue
         fence = re.match(r"(`{3,}|~{3,})", stripped)
@@ -2174,25 +2420,38 @@ def _markdown_contract_view(
                 break
         if raw_special is not None:
             start_match, closing = raw_special
-            if not closing.search(line, start_match.end()):
+            special_end = closing.search(line, start_match.end())
+            if special_end is None:
                 raw_html_end = closing
+            else:
+                special_suffix = line[special_end.end() :]
+                if special_suffix:
+                    rendered.append(
+                        "<h1>"
+                        if RAW_HTML_H1_TOKEN.search(special_suffix)
+                        else f"[raw html suffix]{special_suffix}"
+                    )
             continue
 
         literal_start = RAW_HTML_LITERAL_START.match(line)
         if literal_start is not None:
             tag = literal_start.group("tag")
             closing = re.compile(rf"</{re.escape(tag)}\s*>", re.IGNORECASE)
-            if closing.search(line, literal_start.end()):
+            literal_end = closing.search(line, literal_start.end())
+            if literal_end is not None:
+                literal_suffix = line[literal_end.end() :]
+                if literal_suffix:
+                    rendered.append(
+                        "<h1>"
+                        if RAW_HTML_H1_TOKEN.search(literal_suffix)
+                        else f"[literal suffix]{literal_suffix}"
+                    )
                 continue
             raw_html_end = closing
             continue
         if RAW_HTML_BLOCK_START.match(line) or RAW_HTML_GENERIC_START.match(line):
-            if RAW_HTML_H1_START.match(line):
-                # Raw HTML headings render as document titles even though the
-                # rest of a raw block is intentionally excluded from prose
-                # contract matching.
-                rendered.append(line)
             raw_html_until_blank = True
+            raw_html_block_lines = [line]
             continue
 
         rendered.append(line)
@@ -2205,6 +2464,12 @@ def _markdown_contract_view(
         errors.append(f"{path}: unclosed HTML comment")
     if inline_code_length:
         errors.append(f"{path}: unclosed Markdown inline-code span")
+    if raw_html_block_lines:
+        raw_html_block = "\n".join(raw_html_block_lines)
+        if RAW_HTML_H1_TOKEN.search(raw_html_block) or _contains_visible_html_h1(
+            raw_html_block
+        ):
+            rendered.append("<h1>")
     return rendered, fenced_blocks
 
 
@@ -2263,7 +2528,7 @@ def _expected_frontmatter_readme_cells(
 
     if field == "layout":
         constraint = _format_enum(enum_values)
-    elif field in {"title", "excerpt"}:
+    elif field in {"title", "excerpt", "word_count_override_reason"}:
         constraint = (
             f"{rules.get('min_length')}–{rules.get('max_length')} characters"
         )
@@ -2280,7 +2545,7 @@ def _expected_frontmatter_readme_cells(
             f"{rules.get('min_items')}–{rules.get('max_items')} lowercase, "
             "hyphenated tags"
         )
-    elif field in {"category", "portfolio_relevance"}:
+    elif field in {"category", "portfolio_relevance", "word_count_policy"}:
         constraint = _format_enum(enum_values)
     elif (
         field == "related_repos"
@@ -2407,17 +2672,24 @@ def _validate_required_reader_table(
 def _rendered_level_one_headings(lines: list[str]) -> list[str]:
     """Return CommonMark ATX and setext level-one headings from visible lines."""
     normalized_lines: list[str] = []
+    active_list_indents: list[int] = []
+    previous_blank = False
     for line in lines:
-        normalized = line
+        normalized = _strip_blockquote_prefixes(line)
+        if normalized.strip():
+            normalized, active_list_indents = _normalize_list_container_line(
+                normalized,
+                active_list_indents,
+                previous_blank,
+            )
         while (prefix := COMMONMARK_CONTAINER_PREFIX.match(normalized)) is not None:
             normalized = normalized[prefix.end() :]
         normalized_lines.append(normalized)
+        previous_blank = not normalized.strip()
 
     headings: list[str] = []
     for index, line in enumerate(normalized_lines):
         if re.fullmatch(r"[ ]{0,3}#(?:[ \t]+.*)?", line):
-            headings.append(line)
-        if RAW_HTML_H1_START.match(line):
             headings.append(line)
         if (
             index > 0
@@ -2427,6 +2699,9 @@ def _rendered_level_one_headings(lines: list[str]) -> list[str]:
             headings.append(
                 f"{normalized_lines[index - 1].strip()}\n{line.strip()}"
             )
+    visible_document = "\n".join(_without_inline_code(line) for line in lines)
+    if _contains_visible_html_h1(visible_document):
+        headings.append("<visible HTML h1>")
     return headings
 
 
@@ -2650,7 +2925,10 @@ def _validate_canonical_schema_links(root: Path, errors: list[str]) -> None:
 
 
 def _validate_readme(
-    root: Path, required_map: dict[str, Any], errors: list[str]
+    root: Path,
+    required_map: dict[str, Any],
+    optional_map: dict[str, Any],
+    errors: list[str],
 ) -> None:
     readme_path = root / "README.md"
     if not _is_contained_regular_file(readme_path):
@@ -2709,6 +2987,7 @@ def _validate_readme(
     )
     rendered_readme = "\n".join(rendered_lines)
     required_fields = set(required_map)
+    optional_fields = set(optional_map)
     development_lines = _exact_rendered_section(
         Path("README.md"), rendered_lines, "## Development", errors
     )
@@ -3022,6 +3301,7 @@ def _validate_readme(
     expected_count_phrases = (
         f"the {len(required_fields)} required metadata fields",
         f"All {len(required_fields)} required fields",
+        f"defines {len(optional_fields)} optional policy fields",
     )
     for phrase in expected_count_phrases:
         if phrase not in rendered_readme:
@@ -3139,11 +3419,12 @@ def _validate_readme(
             f"expected={expected_order}, actual={table_fields}"
         )
     renderer_fields = set(FRONTMATTER_README_RULE_KEYS)
-    if renderer_fields != required_fields:
+    schema_fields = required_fields | optional_fields
+    if renderer_fields != schema_fields:
         errors.append(
             "README.md: frontmatter renderer/schema field mismatch: "
-            f"missing={sorted(required_fields - renderer_fields)}, "
-            f"extra={sorted(renderer_fields - required_fields)}"
+            f"missing={sorted(schema_fields - renderer_fields)}, "
+            f"extra={sorted(renderer_fields - schema_fields)}"
         )
     for field in sorted(required_fields & table_field_set):
         rules = required_map.get(field)
@@ -3170,6 +3451,126 @@ def _validate_readme(
             errors.append(
                 f"README.md: frontmatter table/schema cells mismatch for {field!r}: "
                 f"expected={expected_cells}, actual={actual_cells}"
+            )
+
+    optional_header_candidates = [
+        index
+        for index, line in enumerate(lines)
+        if (cells := _table_cells(line)) is not None
+        and cells[:1] == ["Optional field"]
+    ]
+    if len(optional_header_candidates) != 1:
+        errors.append(
+            "README.md: optional frontmatter table header must appear exactly once"
+        )
+        return
+    optional_header_index = optional_header_candidates[0]
+    if optional_header_index + 1 >= len(lines):
+        errors.append("README.md: missing optional frontmatter field table")
+        return
+
+    optional_header_cells = _table_cells(lines[optional_header_index])
+    if optional_header_cells != list(OPTIONAL_FRONTMATTER_TABLE_HEADER):
+        errors.append(
+            "README.md: optional frontmatter table header must be exactly "
+            f"{list(OPTIONAL_FRONTMATTER_TABLE_HEADER)}"
+        )
+    optional_delimiter_cells = _table_cells(lines[optional_header_index + 1])
+    optional_delimiter_valid = (
+        optional_header_cells is not None
+        and optional_delimiter_cells is not None
+        and len(optional_delimiter_cells) == len(optional_header_cells)
+        and all(delimiter_cell.fullmatch(cell) for cell in optional_delimiter_cells)
+    )
+    if not optional_delimiter_valid:
+        errors.append("README.md: invalid optional frontmatter table delimiter")
+
+    optional_table_fields: list[str] = []
+    optional_table_rows: dict[str, tuple[str, str]] = {}
+    invalid_optional_rows: list[str] = []
+    optional_expected_columns = (
+        len(optional_header_cells) if optional_header_cells is not None else 0
+    )
+    optional_table_lines = lines[optional_header_index + 2 :]
+    if (
+        not optional_table_lines
+        or not optional_table_lines[0].lstrip().startswith("|")
+    ):
+        errors.append(
+            "README.md: optional frontmatter table data rows must start "
+            "immediately after the delimiter"
+        )
+    for line in optional_table_lines:
+        if not line.lstrip().startswith("|"):
+            break
+        cells = _table_cells(line)
+        if cells is None or len(cells) != optional_expected_columns:
+            invalid_optional_rows.append(line.strip())
+            continue
+        field_match = re.fullmatch(r"`([^`]+)`", cells[0])
+        if field_match is None:
+            invalid_optional_rows.append(line.strip())
+        else:
+            field = field_match.group(1)
+            optional_table_fields.append(field)
+            optional_table_rows[field] = (cells[1], cells[2])
+
+    if invalid_optional_rows:
+        errors.append(
+            "README.md: invalid optional frontmatter table rows; field names "
+            "must be backtick-wrapped and rows must match the header: "
+            f"{invalid_optional_rows}"
+        )
+    duplicate_optional_fields = sorted(
+        field
+        for field in set(optional_table_fields)
+        if optional_table_fields.count(field) > 1
+    )
+    if duplicate_optional_fields:
+        errors.append(
+            "README.md: duplicate optional frontmatter table fields: "
+            f"{duplicate_optional_fields}"
+        )
+    optional_table_field_set = set(optional_table_fields)
+    if optional_table_field_set != optional_fields:
+        missing = sorted(optional_fields - optional_table_field_set)
+        extra = sorted(optional_table_field_set - optional_fields)
+        errors.append(
+            "README.md: optional frontmatter table/schema mismatch: "
+            f"missing={missing}, extra={extra}"
+        )
+    expected_optional_order = list(optional_map)
+    if optional_table_fields != expected_optional_order:
+        errors.append(
+            "README.md: optional frontmatter table/schema field order mismatch: "
+            f"expected={expected_optional_order}, actual={optional_table_fields}"
+        )
+    for field in sorted(optional_fields & optional_table_field_set):
+        rules = optional_map.get(field)
+        if not isinstance(rules, dict):
+            errors.append(
+                f"schemas/frontmatter-schema.yaml: rules for {field!r} "
+                "are not a mapping"
+            )
+            continue
+        actual_rule_keys = {
+            key for key in rules if isinstance(key, str) and key.strip()
+        } - {"description"}
+        expected_rule_keys = FRONTMATTER_README_RULE_KEYS.get(field, set())
+        if actual_rule_keys != expected_rule_keys:
+            errors.append(
+                "README.md: optional frontmatter table renderer does not cover "
+                f"schema rules for {field!r}: "
+                f"expected={sorted(expected_rule_keys)}, "
+                f"actual={sorted(actual_rule_keys)}"
+            )
+            continue
+        expected_cells = _expected_frontmatter_readme_cells(field, rules)
+        actual_cells = optional_table_rows[field]
+        if actual_cells != expected_cells:
+            errors.append(
+                "README.md: optional frontmatter table/schema cells mismatch for "
+                f"{field!r}: expected={expected_cells}, actual={actual_cells}"
             )
 
 
@@ -3230,13 +3631,19 @@ def _validate_tag_governance(
         )
 
     preferred_tags = governance.get("preferred_tags")
-    if not isinstance(preferred_tags, list) or not all(
-        isinstance(tag, str) for tag in preferred_tags
+    if not isinstance(preferred_tags, list) or not preferred_tags or not all(
+        isinstance(tag, str) and tag for tag in preferred_tags
     ):
         errors.append(
-            "schemas/tag-governance.yaml: preferred_tags must be a list of strings"
+            "schemas/tag-governance.yaml: preferred_tags must be a nonempty "
+            "list of nonempty strings"
         )
         return
+    if preferred_tags != CANONICAL_PREFERRED_TAGS:
+        errors.append(
+            "schemas/tag-governance.yaml: preferred_tags must match the exact "
+            "canonical curated vocabulary and order"
+        )
     duplicates = sorted(
         tag for tag in set(preferred_tags) if preferred_tags.count(tag) > 1
     )
@@ -3435,8 +3842,9 @@ def _validate_quality_rubric(root: Path, errors: list[str]) -> None:
     if not isinstance(rubric, dict):
         errors.append(f"{rubric_path}: rubric must be a YAML mapping")
         return
-    if rubric.get("total_points") != 100:
-        errors.append(f"{rubric_path}: total_points must be 100")
+    total_points = rubric.get("total_points")
+    if type(total_points) is not int or total_points != 100:
+        errors.append(f"{rubric_path}: total_points must be 100 as an integer")
 
     dimensions = rubric.get("dimensions")
     if not isinstance(dimensions, dict):
@@ -3463,9 +3871,10 @@ def _validate_quality_rubric(root: Path, errors: list[str]) -> None:
             errors.append(f"{rubric_path}: dimension {dimension!r} must be a mapping")
             continue
         max_points = details.get("max_points")
-        if max_points != 20:
+        if type(max_points) is not int or max_points != 20:
             errors.append(
-                f"{rubric_path}: dimension {dimension!r} max_points must be 20"
+                f"{rubric_path}: dimension {dimension!r} max_points must be "
+                "20 as an integer"
             )
         else:
             total_dimension_points += max_points
@@ -3508,11 +3917,15 @@ def _validate_quality_rubric(root: Path, errors: list[str]) -> None:
             f"found {total_dimension_points}"
         )
 
-    if rubric.get("thresholds") != QUALITY_RUBRIC_THRESHOLDS:
+    thresholds = rubric.get("thresholds")
+    threshold_values_are_integers = isinstance(thresholds, dict) and all(
+        type(value) is int for value in thresholds.values()
+    )
+    if not threshold_values_are_integers or thresholds != QUALITY_RUBRIC_THRESHOLDS:
         errors.append(
             f"{rubric_path}: thresholds mismatch: "
             f"expected={QUALITY_RUBRIC_THRESHOLDS}, "
-            f"actual={rubric.get('thresholds')!r}"
+            f"actual={thresholds!r}"
         )
 
 
@@ -3922,7 +4335,7 @@ def validate(root: Path) -> list[str]:
                 )
 
     _validate_log_template(root, errors)
-    _validate_readme(root, required_map, errors)
+    _validate_readme(root, required_map, optional_map, errors)
     _validate_repository_identity(root, errors)
 
     for relative_path in sorted(READER_MODE_TEMPLATES):
