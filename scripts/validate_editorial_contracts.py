@@ -362,6 +362,10 @@ REQUIRED_READER_MARKERS = {
     ),
 }
 REQUIRED_READER_TABLES = {
+    Path("docs/reader-mode-documentation.md"): (
+        ("Reader mode", "First question", "Foreground"),
+        ("Class", "Repository function", "Required documentation"),
+    ),
     Path("templates/repository-readme-v2.md"): (
         ("I am reading as…", "Start here"),
         ("", ""),
@@ -380,6 +384,21 @@ REQUIRED_READER_TABLES = {
     ),
 }
 REQUIRED_READER_TABLE_ROW_LABELS = {
+    (
+        Path("docs/reader-mode-documentation.md"),
+        ("Reader mode", "First question", "Foreground"),
+    ): ("General", "Technical", "Humanities", "Business", "Evaluator"),
+    (
+        Path("docs/reader-mode-documentation.md"),
+        ("Class", "Repository function", "Required documentation"),
+    ): (
+        "A — Flagship system",
+        "B — Major project",
+        "C — Supporting component",
+        "D — Deployment artifact",
+        "E — Research/theory",
+        "F — Archive/reference",
+    ),
     (Path("templates/repository-readme-v2.md"), ("", "")): (
         "**What it is**",
         "**Problem addressed**",
@@ -391,6 +410,14 @@ REQUIRED_READER_TABLE_ROW_LABELS = {
     ),
 }
 REQUIRED_READER_TABLE_SECTIONS = {
+    (
+        Path("docs/reader-mode-documentation.md"),
+        ("Reader mode", "First question", "Foreground"),
+    ): "## Reader questions",
+    (
+        Path("docs/reader-mode-documentation.md"),
+        ("Class", "Repository function", "Required documentation"),
+    ): "## Repository classes",
     (
         Path("templates/repository-readme-v2.md"),
         ("I am reading as…", "Start here"),
@@ -439,6 +466,18 @@ def _load_yaml(path: Path, errors: list[str]) -> Any:
         return None
 
 
+def _publication_sections(content: str) -> tuple[list[str], list[str]] | None:
+    """Split a publication only when both YAML delimiters are standalone lines."""
+    lines = content.splitlines()
+    if not lines or lines[0] != "---":
+        return None
+    try:
+        closing_delimiter = lines.index("---", 1)
+    except ValueError:
+        return None
+    return lines[1:closing_delimiter], lines[closing_delimiter + 1 :]
+
+
 def _frontmatter(path: Path, errors: list[str]) -> dict[str, Any] | None:
     try:
         content = path.read_text(encoding="utf-8")
@@ -446,12 +485,14 @@ def _frontmatter(path: Path, errors: list[str]) -> dict[str, Any] | None:
         errors.append(f"{path}: cannot read template: {exc}")
         return None
 
-    parts = content.split("---", 2)
-    if not content.startswith("---") or len(parts) < 3:
-        errors.append(f"{path}: missing or incomplete publication frontmatter")
+    sections = _publication_sections(content)
+    if sections is None:
+        errors.append(
+            f"{path}: publication frontmatter requires standalone '---' delimiters"
+        )
         return None
     try:
-        data = yaml.safe_load(parts[1])
+        data = yaml.safe_load("\n".join(sections[0]))
     except yaml.YAMLError as exc:
         errors.append(f"{path}: invalid frontmatter YAML: {exc}")
         return None
@@ -677,6 +718,21 @@ def _without_html_comments(path: Path, content: str, errors: list[str]) -> str:
     return "".join(visible)
 
 
+def _is_indented_code_line(line: str) -> bool:
+    """Return whether CommonMark treats a leading whitespace run as code."""
+    column = 0
+    for character in line:
+        if character == " ":
+            column += 1
+        elif character == "\t":
+            column += 4 - (column % 4)
+        else:
+            break
+        if column >= 4:
+            return True
+    return False
+
+
 def _rendered_markdown_lines(
     path: Path, content: str, errors: list[str]
 ) -> list[str]:
@@ -687,9 +743,7 @@ def _rendered_markdown_lines(
     fence_length = 0
     for line in content.splitlines():
         stripped = line.lstrip()
-        if len(line) - len(stripped) > 3:
-            if fence_character is None:
-                rendered.append(line)
+        if _is_indented_code_line(line):
             continue
         fence = re.match(r"(`{3,}|~{3,})", stripped)
         if fence_character is None:
@@ -856,7 +910,9 @@ def _validate_required_reader_table(
                 f"expected={list(required_row_labels)}, "
                 f"actual={list(actual_row_labels)}"
             )
-        empty_labels = [row[0] for row in data_rows if not row[1]]
+        empty_labels = [
+            row[0] for row in data_rows if any(not cell for cell in row[1:])
+        ]
         if empty_labels:
             errors.append(
                 f"{path}: required table {label!r} has empty values for "
@@ -894,10 +950,10 @@ def _validate_reader_structure(
 def _validate_publication_body(
     path: Path, content: str, errors: list[str]
 ) -> None:
-    parts = content.split("---", 2)
-    if not content.startswith("---") or len(parts) < 3:
+    sections = _publication_sections(content)
+    if sections is None:
         return
-    body_lines = _rendered_markdown_lines(path, parts[2], errors)
+    body_lines = _rendered_markdown_lines(path, "\n".join(sections[1]), errors)
     _validate_reader_structure(
         path,
         body_lines,
@@ -957,25 +1013,46 @@ def _validate_readme(
         else ""
     )
     bash_blocks = re.findall(
-        r"```bash\s*\n(.*?)\n```", command_development_section, re.DOTALL
+        r"^```bash[ \t]*\n(.*?)^```[ \t]*$",
+        command_development_section,
+        re.DOTALL | re.MULTILINE,
     )
-    executable_bash_lines = {
+    executable_bash_lines = [
         line.strip()
         for block in bash_blocks
         for line in block.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
-    }
+    ]
     for prerequisite in REQUIRED_LOCAL_CI_PREREQUISITES:
         if prerequisite not in rendered_development_section:
             errors.append(
                 "README.md: missing local CI reproduction prerequisite: "
                 f"{prerequisite}"
             )
+    command_positions: list[int] = []
+    complete_command_sequence = True
     for command in REQUIRED_LOCAL_CI_COMMANDS:
-        if command not in executable_bash_lines:
+        positions = [
+            index
+            for index, executable_line in enumerate(executable_bash_lines)
+            if executable_line == command
+        ]
+        if not positions:
             errors.append(
                 f"README.md: missing local CI reproduction command: {command}"
             )
+            complete_command_sequence = False
+        elif len(positions) > 1:
+            errors.append(
+                f"README.md: duplicate local CI reproduction command: {command}"
+            )
+            complete_command_sequence = False
+        else:
+            command_positions.append(positions[0])
+    if complete_command_sequence and command_positions != sorted(command_positions):
+        errors.append(
+            "README.md: local CI reproduction commands must follow hosted CI order"
+        )
     obsolete_field_guidance = (
         "Must match the `slug` frontmatter field",
         "No markdown in the abstract field",
@@ -1559,7 +1636,10 @@ def validate(root: Path) -> list[str]:
             "reader-mode marker contracts do not match declared templates: "
             f"{list(map(str, marker_contract_gap))}"
         )
-    table_contract_gap = sorted(set(REQUIRED_READER_TABLES) - READER_MODE_TEMPLATES)
+    table_contract_paths = READER_MODE_TEMPLATES | {
+        Path("docs/reader-mode-documentation.md")
+    }
+    table_contract_gap = sorted(set(REQUIRED_READER_TABLES) - table_contract_paths)
     if table_contract_gap:
         errors.append(
             "reader-mode table contracts reference undeclared templates: "

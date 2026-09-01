@@ -147,6 +147,28 @@ class EditorialContractTests(unittest.TestCase):
 
         self.assert_contract_error("frontmatter table header must appear exactly once")
 
+    def test_rejects_frontmatter_table_rendered_as_indented_code(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        lines = original.splitlines()
+        header_index = lines.index("| Field | Type | Core constraint |")
+        table_end = header_index + 1
+        while table_end + 1 < len(lines) and lines[table_end + 1].startswith("|"):
+            table_end += 1
+
+        for indentation in ("    ", "\t", " \t", "   \t"):
+            with self.subTest(indentation=repr(indentation)):
+                mutated = lines.copy()
+                mutated[header_index : table_end + 1] = [
+                    indentation + line
+                    for line in mutated[header_index : table_end + 1]
+                ]
+                path.write_text("\n".join(mutated) + "\n", encoding="utf-8")
+                self.assert_contract_error(
+                    "frontmatter table header must appear exactly once"
+                )
+        path.write_text(original, encoding="utf-8")
+
     def test_rejects_incomplete_root_readme_orientation(self) -> None:
         path = self.fixture_root / "templates/repository-readme-v2.md"
         original = path.read_text(encoding="utf-8")
@@ -193,6 +215,20 @@ class EditorialContractTests(unittest.TestCase):
     def test_binds_every_required_reader_table_to_its_section(self) -> None:
         mutations = (
             (
+                "docs/reader-mode-documentation.md",
+                "## Reader questions\n\n| Reader mode | First question | Foreground |",
+                "## Reader questions\n\n## Detached reader questions\n\n"
+                "| Reader mode | First question | Foreground |",
+            ),
+            (
+                "docs/reader-mode-documentation.md",
+                "## Repository classes\n\nClass controls documentation breadth. It is not a prestige grade.\n\n"
+                "| Class | Repository function | Required documentation |",
+                "## Repository classes\n\nClass controls documentation breadth. It is not a prestige grade.\n\n"
+                "## Detached classes\n\n"
+                "| Class | Repository function | Required documentation |",
+            ),
+            (
                 "templates/repository-readme-v2.md",
                 "## Choose your reading path\n\n| I am reading as… | Start here |",
                 "## Choose your reading path\n\n## Detached route table\n\n| I am reading as… | Start here |",
@@ -217,6 +253,60 @@ class EditorialContractTests(unittest.TestCase):
                     original.replace(current, replacement, 1), encoding="utf-8"
                 )
                 self.assert_contract_error("must remain within section")
+                path.write_text(original, encoding="utf-8")
+
+    def test_requires_every_reader_question_and_repository_class_row(self) -> None:
+        path = self.fixture_root / "docs/reader-mode-documentation.md"
+        original = path.read_text(encoding="utf-8")
+        row_labels = (
+            "General",
+            "Technical",
+            "Humanities",
+            "Business",
+            "Evaluator",
+            "A — Flagship system",
+            "B — Major project",
+            "C — Supporting component",
+            "D — Deployment artifact",
+            "E — Research/theory",
+            "F — Archive/reference",
+        )
+        for label in row_labels:
+            with self.subTest(label=label):
+                row = next(
+                    line
+                    for line in original.splitlines()
+                    if line.startswith(f"| {label} |")
+                )
+                path.write_text(original.replace(f"{row}\n", "", 1), encoding="utf-8")
+                self.assert_contract_error("row labels/order mismatch")
+                path.write_text(original, encoding="utf-8")
+
+        header = "| Class | Repository function | Required documentation |"
+        self.assertIn(header, original)
+        path.write_text(original.replace(header, "", 1), encoding="utf-8")
+        self.assert_contract_error("required table header")
+
+    def test_rejects_empty_reader_contract_table_cells(self) -> None:
+        path = self.fixture_root / "docs/reader-mode-documentation.md"
+        original = path.read_text(encoding="utf-8")
+        mutations = (
+            (
+                "| General | What is this, and why should I care? | Recognition, example, current state |",
+                "| General | | Recognition, example, current state |",
+            ),
+            (
+                "| F — Archive/reference | Superseded or preserved material | Archive notice, provenance, immutable status, correct redirect |",
+                "| F — Archive/reference | Superseded or preserved material | |",
+            ),
+        )
+        for current, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error("has empty values")
                 path.write_text(original, encoding="utf-8")
 
     def test_requires_every_at_a_glance_row_contiguously(self) -> None:
@@ -441,6 +531,27 @@ class EditorialContractTests(unittest.TestCase):
                 self.assert_contract_error("missing local CI reproduction command")
                 path.write_text(original, encoding="utf-8")
 
+    def test_requires_local_ci_commands_once_and_in_hosted_order(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        install = "python3 -m pip install pyyaml"
+        unit_tests = "python3 -m unittest discover -s tests -v"
+
+        reordered = (
+            original.replace(install, "__INSTALL_COMMAND__", 1)
+            .replace(unit_tests, install, 1)
+            .replace("__INSTALL_COMMAND__", unit_tests, 1)
+        )
+        path.write_text(reordered, encoding="utf-8")
+        self.assert_contract_error("must follow hosted CI order")
+
+        path.write_text(
+            original.replace(f"{install}\n", f"{install}\n{install}\n", 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("duplicate local CI reproduction command")
+        path.write_text(original, encoding="utf-8")
+
     def test_rejects_fenced_reader_structure_and_canonical_link(self) -> None:
         path = self.fixture_root / "templates/audiences/general.md"
         original = path.read_text(encoding="utf-8")
@@ -536,6 +647,31 @@ class EditorialContractTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 self.assert_contract_error("missing required template marker")
+        guide_path.write_text(guide, encoding="utf-8")
+
+    def test_requires_standalone_publication_frontmatter_delimiters(self) -> None:
+        publication_templates = (
+            "case-study.md",
+            "guide.md",
+            "log.md",
+            "meta-system.md",
+            "methodology.md",
+            "retrospective.md",
+        )
+        for filename in publication_templates:
+            path = self.fixture_root / "templates" / filename
+            original = path.read_text(encoding="utf-8")
+            with self.subTest(filename=filename, delimiter="closing"):
+                self.assertIn("references: []\n---\n", original)
+                path.write_text(
+                    original.replace("references: []\n---\n", "references: []---\n", 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("requires standalone '---' delimiters")
+            with self.subTest(filename=filename, delimiter="opening"):
+                path.write_text(original.replace("---\n", "--- \n", 1), encoding="utf-8")
+                self.assert_contract_error("requires standalone '---' delimiters")
+            path.write_text(original, encoding="utf-8")
 
     def test_rejects_incomplete_reader_rubric_contract(self) -> None:
         path = self.fixture_root / "schemas/reader-mode-rubric.yaml"
