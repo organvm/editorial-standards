@@ -3543,7 +3543,7 @@ class EditorialContractTests(unittest.TestCase):
     def test_rejects_impossible_formatted_calendar_dates(self) -> None:
         cases = (
             ("templates/guide.md", 'date: "YYYY-MM-DD"', 'date: "2026-02-31"'),
-            ("templates/log.md", "date: YYYY-MM-DD", "date: 2026-99-99"),
+            ("templates/log.md", "date: YYYY-MM-DD", 'date: "2026-99-99"'),
         )
         for relative_path, placeholder, impossible in cases:
             with self.subTest(path=relative_path):
