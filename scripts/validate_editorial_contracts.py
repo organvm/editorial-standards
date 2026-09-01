@@ -129,6 +129,16 @@ REQUIRED_LOCAL_CI_COMMANDS = (
     "python3 -m py_compile scripts/validate_editorial_contracts.py tests/test_editorial_contracts.py",
     "git diff --check",
 )
+REQUIRED_HOSTED_CI_COMMAND_STEPS = (
+    (
+        "Validate editorial contracts",
+        "python3 scripts/validate_editorial_contracts.py",
+    ),
+    (
+        "Run adversarial contract regressions",
+        "python3 -m unittest discover -s tests -v",
+    ),
+)
 REQUIRED_YAML_VALIDATION_COMMAND = "\n".join(
     (
         'python3 -c "',
@@ -1093,45 +1103,74 @@ def _find_unescaped_token(text: str, token: str, start: int) -> int:
     return position
 
 
+def _find_backtick_run(text: str, start: int, expected_length: int) -> int:
+    """Locate the next backtick run with exactly the requested length."""
+    position = text.find("`", start)
+    while position >= 0:
+        run_length = len(text[position:]) - len(text[position:].lstrip("`"))
+        if run_length == expected_length:
+            return position
+        position = text.find("`", position + run_length)
+    return -1
+
+
 def _strip_html_comments_from_line(
     line: str,
     in_comment: bool,
-) -> tuple[str, bool]:
-    """Strip comments outside code fences while retaining visible line fragments."""
+    inline_code_length: int,
+) -> tuple[str, bool, int]:
+    """Strip inline code and comments while carrying both states across lines."""
     visible: list[str] = []
     cursor = 0
     while cursor < len(line):
         if in_comment:
             end = line.find("-->", cursor)
             if end < 0:
-                return "".join(visible), True
+                return "".join(visible), True, inline_code_length
             in_comment = False
             cursor = end + 3
             continue
+        if inline_code_length:
+            code_end = _find_backtick_run(line, cursor, inline_code_length)
+            if code_end < 0:
+                return "".join(visible), in_comment, inline_code_length
+            cursor = code_end + inline_code_length
+            inline_code_length = 0
+            continue
+
         comment_start = _find_unescaped_token(line, "<!--", cursor)
         code_start = _find_unescaped_token(line, "`", cursor)
-        if code_start >= 0 and (comment_start < 0 or code_start < comment_start):
+        if code_start >= 0:
             code_length = len(line[code_start:]) - len(line[code_start:].lstrip("`"))
-            code_end = line.find("`", code_start + code_length)
-            while code_end >= 0:
-                closing_length = len(line[code_end:]) - len(
-                    line[code_end:].lstrip("`")
-                )
-                if closing_length == code_length:
-                    break
-                code_end = line.find("`", code_end + closing_length)
-            if code_end >= 0:
-                code_end += code_length
-                visible.append(line[cursor:code_end])
-                cursor = code_end
-                continue
+            possible_fence = (
+                code_length >= 3
+                and not line[:code_start].strip()
+                and not _is_indented_code_line(line)
+            )
+            if possible_fence:
+                visible.append(line[cursor:])
+                break
+        if code_start >= 0 and (comment_start < 0 or code_start < comment_start):
+            visible.append(line[cursor:code_start])
+            code_length = len(line[code_start:]) - len(line[code_start:].lstrip("`"))
+            code_end = _find_backtick_run(
+                line,
+                code_start + code_length,
+                code_length,
+            )
+            if code_end < 0:
+                return "".join(visible), in_comment, code_length
+            code_end += code_length
+            visible.append(line[code_start:code_end])
+            cursor = code_end
+            continue
         if comment_start < 0:
             visible.append(line[cursor:])
             break
         visible.append(line[cursor:comment_start])
         in_comment = True
         cursor = comment_start + 4
-    return "".join(visible), in_comment
+    return "".join(visible), in_comment, inline_code_length
 
 
 def _markdown_contract_view(
@@ -1145,6 +1184,7 @@ def _markdown_contract_view(
     fence_info = ""
     fence_lines: list[str] = []
     in_comment = False
+    inline_code_length = 0
     raw_html_end: re.Pattern[str] | None = None
     raw_html_until_blank = False
 
@@ -1178,7 +1218,11 @@ def _markdown_contract_view(
                 raw_html_until_blank = False
             continue
 
-        line, in_comment = _strip_html_comments_from_line(line, in_comment)
+        line, in_comment, inline_code_length = _strip_html_comments_from_line(
+            line,
+            in_comment,
+            inline_code_length,
+        )
         if not line.strip():
             rendered.append(line)
             continue
@@ -1227,6 +1271,8 @@ def _markdown_contract_view(
         errors.append(f"{path}: unclosed Markdown code fence")
     if in_comment:
         errors.append(f"{path}: unclosed HTML comment")
+    if inline_code_length:
+        errors.append(f"{path}: unclosed Markdown inline-code span")
     return rendered, fenced_blocks
 
 
@@ -1543,6 +1589,49 @@ def _validate_readme(
     )
     if not isinstance(workflow_steps, list):
         workflow_steps = []
+
+    hosted_command_positions: list[int] = []
+    hosted_command_sequence_complete = True
+    for step_name, expected_command in REQUIRED_HOSTED_CI_COMMAND_STEPS:
+        matching_steps = [
+            (index, step)
+            for index, step in enumerate(workflow_steps)
+            if isinstance(step, dict) and step.get("name") == step_name
+        ]
+        if len(matching_steps) != 1:
+            errors.append(
+                ".github/workflows/ci.yml: hosted CI step "
+                f"{step_name!r} must appear exactly once"
+            )
+            hosted_command_sequence_complete = False
+            continue
+        index, step = matching_steps[0]
+        command_invocations = [
+            candidate
+            for candidate in workflow_steps
+            if isinstance(candidate, dict)
+            and candidate.get("run") == expected_command
+        ]
+        if len(command_invocations) != 1:
+            errors.append(
+                ".github/workflows/ci.yml: hosted CI command "
+                f"{expected_command!r} must be invoked exactly once"
+            )
+        if step.get("run") != expected_command:
+            errors.append(
+                ".github/workflows/ci.yml: hosted CI step "
+                f"{step_name!r} must run exactly {expected_command!r}"
+            )
+        hosted_command_positions.append(index)
+    if (
+        hosted_command_sequence_complete
+        and hosted_command_positions != sorted(hosted_command_positions)
+    ):
+        errors.append(
+            ".github/workflows/ci.yml: hosted contract checks must remain in "
+            "canonical order"
+        )
+
     hosted_yaml_commands = [
         step.get("run")
         for step in workflow_steps

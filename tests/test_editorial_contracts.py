@@ -711,6 +711,69 @@ class EditorialContractTests(unittest.TestCase):
         readme_path.write_text(original_readme, encoding="utf-8")
         workflow_path.write_text(original_workflow, encoding="utf-8")
 
+    def test_pins_hosted_contract_and_regression_steps(self) -> None:
+        path = self.fixture_root / ".github/workflows/ci.yml"
+        original = path.read_text(encoding="utf-8")
+        steps = (
+            (
+                "Validate editorial contracts",
+                "python3 scripts/validate_editorial_contracts.py",
+            ),
+            (
+                "Run adversarial contract regressions",
+                "python3 -m unittest discover -s tests -v",
+            ),
+        )
+        blocks: list[str] = []
+        for name, command in steps:
+            block = f"      - name: {name}\n        run: {command}\n"
+            blocks.append(block)
+            self.assertIn(block, original)
+            with self.subTest(name=name, mutation="deleted"):
+                path.write_text(original.replace(block, "", 1), encoding="utf-8")
+                self.assert_contract_error(
+                    f"hosted CI step {name!r} must appear exactly once"
+                )
+            with self.subTest(name=name, mutation="bypassed"):
+                path.write_text(
+                    original.replace(command, f"{command} || true", 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(f"hosted CI step {name!r} must run exactly")
+            with self.subTest(name=name, mutation="duplicated"):
+                path.write_text(
+                    original.replace(block, f"{block}\n{block}", 1),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(
+                    f"hosted CI step {name!r} must appear exactly once"
+                )
+            with self.subTest(name=name, mutation="duplicate invocation"):
+                duplicate_invocation = (
+                    "      - name: Duplicate protected command\n"
+                    f"        run: {command}\n"
+                )
+                path.write_text(
+                    original.replace(
+                        block,
+                        f"{block}\n{duplicate_invocation}",
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error(
+                    f"hosted CI command {command!r} must be invoked exactly once"
+                )
+            path.write_text(original, encoding="utf-8")
+
+        reordered = (
+            original.replace(blocks[0], "__FIRST_HOSTED_STEP__\n", 1)
+            .replace(blocks[1], blocks[0], 1)
+            .replace("__FIRST_HOSTED_STEP__\n", blocks[1], 1)
+        )
+        path.write_text(reordered, encoding="utf-8")
+        self.assert_contract_error("hosted contract checks must remain in canonical order")
+
     def test_rejects_fenced_reader_structure_and_canonical_link(self) -> None:
         path = self.fixture_root / "templates/audiences/general.md"
         original = path.read_text(encoding="utf-8")
@@ -778,6 +841,35 @@ class EditorialContractTests(unittest.TestCase):
         errors = validate(self.fixture_root)
         self.assertTrue(any("missing required template marker" in e for e in errors))
         self.assertTrue(any("missing canonical project link" in e for e in errors))
+
+    def test_multiline_inline_code_cannot_supply_reader_contract_markers(self) -> None:
+        path = self.fixture_root / "templates/repository-readme-v2.md"
+        original = path.read_text(encoding="utf-8")
+        hero = (
+            "[View the project] · [See a demonstration] · [Technical documentation] ·\n"
+            "[Humanities interpretation] · [Business applications] · [Evidence]"
+        )
+        self.assertIn(hero, original)
+        for delimiter, embedded in (("`", ""), ("``", "`\n")):
+            with self.subTest(delimiter=delimiter):
+                path.write_text(
+                    original.replace(
+                        hero,
+                        f"{delimiter}\n{embedded}{hero}\n{delimiter}",
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("missing required template marker")
+
+        path.write_text(
+            original + "\n`\n<!-- remains literal inside multiline code\n`\n",
+            encoding="utf-8",
+        )
+        self.assertEqual([], validate(self.fixture_root))
+
+        path.write_text(original + "\n`\nunclosed span\n", encoding="utf-8")
+        self.assert_contract_error("unclosed Markdown inline-code span")
 
     def test_rejects_reader_contracts_hidden_in_raw_html_blocks(self) -> None:
         path = self.fixture_root / "templates/audiences/general.md"
