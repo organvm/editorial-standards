@@ -133,6 +133,20 @@ class EditorialContractTests(unittest.TestCase):
                 )
         path.write_text(original, encoding="utf-8")
 
+    def test_rejects_frontmatter_table_rendered_only_as_code(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        lines = original.splitlines()
+        header_index = lines.index("| Field | Type | Core constraint |")
+        table_end = header_index + 1
+        while table_end + 1 < len(lines) and lines[table_end + 1].startswith("|"):
+            table_end += 1
+        lines.insert(header_index, "```markdown")
+        lines.insert(table_end + 2, "```")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        self.assert_contract_error("frontmatter table header must appear exactly once")
+
     def test_rejects_incomplete_root_readme_orientation(self) -> None:
         path = self.fixture_root / "templates/repository-readme-v2.md"
         original = path.read_text(encoding="utf-8")
@@ -391,6 +405,21 @@ class EditorialContractTests(unittest.TestCase):
 
         self.assert_contract_error("schema must be a YAML mapping")
 
+    def test_rejects_schema_metadata_drift(self) -> None:
+        path = self.fixture_root / "schemas/reader-mode-rubric.yaml"
+        original = path.read_text(encoding="utf-8")
+        path.write_text(
+            original.replace('schema_version: "1.0"', 'schema_version: "2.0"', 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("schema_version must be '1.0'")
+
+        path.write_text(
+            original.replace("description: >-", 'description: ""\nignored: >-', 1),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("schema needs a nonempty description")
+
     def test_rejects_missing_local_ci_reproduction_command(self) -> None:
         path = self.fixture_root / "README.md"
         original = path.read_text(encoding="utf-8")
@@ -424,6 +453,18 @@ class EditorialContractTests(unittest.TestCase):
         self.assertTrue(any("missing required template marker" in error for error in errors))
         self.assertTrue(any("missing canonical project link" in error for error in errors))
 
+    def test_rejects_html_commented_reader_structure_and_canonical_link(self) -> None:
+        path = self.fixture_root / "templates/audiences/general.md"
+        original = path.read_text(encoding="utf-8")
+        lines = original.splitlines()
+        self.assertTrue(lines[0].startswith("# "))
+        commented = "\n".join((lines[0], "", "<!--", *lines[1:], "-->", ""))
+        path.write_text(commented, encoding="utf-8")
+
+        errors = validate(self.fixture_root)
+        self.assertTrue(any("missing required template marker" in error for error in errors))
+        self.assertTrue(any("missing canonical project link" in error for error in errors))
+
     def test_rejects_tag_governance_drift(self) -> None:
         path = self.fixture_root / "schemas/tag-governance.yaml"
         original = path.read_text(encoding="utf-8")
@@ -447,6 +488,150 @@ class EditorialContractTests(unittest.TestCase):
                 )
                 self.assert_contract_error("tag governance/frontmatter mismatch")
                 path.write_text(original, encoding="utf-8")
+
+    def test_rejects_category_taxonomy_drift(self) -> None:
+        path = self.fixture_root / "schemas/category-taxonomy.yaml"
+        original = path.read_text(encoding="utf-8")
+        self.assertIn("  guide:\n", original)
+        path.write_text(
+            original.replace("  guide:\n", "  tutorial:\n", 1), encoding="utf-8"
+        )
+
+        self.assert_contract_error("category taxonomy/frontmatter/template mismatch")
+        path.write_text(original, encoding="utf-8")
+
+        readme_path = self.fixture_root / "README.md"
+        readme = readme_path.read_text(encoding="utf-8")
+        readme_path.write_text(
+            readme.replace("### Guide", "### Tutorial", 1), encoding="utf-8"
+        )
+        self.assert_contract_error("missing required template marker")
+
+    def test_rejects_missing_or_hidden_publication_template_bodies(self) -> None:
+        publication_templates = (
+            "case-study.md",
+            "guide.md",
+            "log.md",
+            "meta-system.md",
+            "methodology.md",
+            "retrospective.md",
+        )
+        for filename in publication_templates:
+            with self.subTest(filename=filename, mutation="missing"):
+                path = self.fixture_root / "templates" / filename
+                original = path.read_text(encoding="utf-8")
+                parts = original.split("---", 2)
+                self.assertEqual(3, len(parts))
+                path.write_text(f"---{parts[1]}---\n", encoding="utf-8")
+                self.assert_contract_error("missing required template marker")
+                path.write_text(original, encoding="utf-8")
+
+        guide_path = self.fixture_root / "templates/guide.md"
+        guide = guide_path.read_text(encoding="utf-8")
+        parts = guide.split("---", 2)
+        for opening, closing in (("```markdown", "```"), ("<!--", "-->")):
+            with self.subTest(template="guide.md", opening=opening):
+                guide_path.write_text(
+                    f"---{parts[1]}---\n{opening}\n{parts[2]}\n{closing}\n",
+                    encoding="utf-8",
+                )
+                self.assert_contract_error("missing required template marker")
+
+    def test_rejects_incomplete_reader_rubric_contract(self) -> None:
+        path = self.fixture_root / "schemas/reader-mode-rubric.yaml"
+        original = path.read_text(encoding="utf-8")
+        mutations = (
+            ("  maximum: 4", "  maximum: 5", "expected scoring scale"),
+            (
+                "dimensions:\n  orientation:",
+                "dimensions: {}\nremoved_dimensions:\n  orientation:",
+                "dimension set mismatch",
+            ),
+            (
+                '      4: "The first screen also routes distinct audiences without blocking the canonical depth."',
+                "",
+                "anchor set mismatch",
+            ),
+            (
+                '      0: "No usable root README."',
+                '      0: ""',
+                "has empty anchors",
+            ),
+        )
+        for current, replacement, expected_error in mutations:
+            with self.subTest(replacement=replacement):
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error(expected_error)
+                path.write_text(original, encoding="utf-8")
+
+    def test_rejects_incomplete_or_hidden_reader_mode_standard(self) -> None:
+        path = self.fixture_root / "docs/reader-mode-documentation.md"
+        original = path.read_text(encoding="utf-8")
+        path.write_text("# Reader-mode repository documentation\n", encoding="utf-8")
+        self.assert_contract_error("missing required template marker")
+
+        lines = original.splitlines()
+        path.write_text(
+            "\n".join((lines[0], "", "<!--", *lines[1:], "-->", "")),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("missing required template marker")
+
+        path.write_text(
+            original.replace(
+                "technical\ndepth, conceptual depth",
+                "technical\ndepth and conceptual depth",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.assert_contract_error("reader rubric dimension sentence is missing or stale")
+
+    def test_rejects_incomplete_quality_rubric_contract(self) -> None:
+        path = self.fixture_root / "schemas/quality-rubric.yaml"
+        original = path.read_text(encoding="utf-8")
+        mutations = (
+            ("total_points: 100", "total_points: 99", "total_points must be 100"),
+            (
+                "  clarity:\n",
+                "  substance:\n",
+                "dimension set mismatch",
+            ),
+            ("    max_points: 20", "    max_points: 19", "max_points must be 20"),
+            (
+                '      0: "No comprehensible argument or usable structure."',
+                "",
+                "scoring anchors mismatch",
+            ),
+            (
+                "  flagship_candidate: 80",
+                "  flagship_candidate: 81",
+                "thresholds mismatch",
+            ),
+        )
+        for current, replacement, expected_error in mutations:
+            with self.subTest(replacement=replacement):
+                self.assertIn(current, original)
+                path.write_text(
+                    original.replace(current, replacement, 1), encoding="utf-8"
+                )
+                self.assert_contract_error(expected_error)
+                path.write_text(original, encoding="utf-8")
+
+    def test_rejects_quality_rubric_readme_heading_drift(self) -> None:
+        path = self.fixture_root / "README.md"
+        original = path.read_text(encoding="utf-8")
+        heading = "### Insight Density (20 points)"
+        self.assertIn(heading, original)
+        path.write_text(
+            original.replace(heading, "### Substance (20 points)", 1),
+            encoding="utf-8",
+        )
+
+        self.assert_contract_error("missing required template marker")
 
     def test_reports_malformed_related_repository_pattern(self) -> None:
         path = self.fixture_root / "schemas/frontmatter-schema.yaml"

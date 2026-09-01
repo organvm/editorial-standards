@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the authoritative 12-field schema, with CI regression coverage
 - Expanded `related_repos` validation to canonical consolidated and legacy
   ORGANVM `owner/repository` slugs
+- Aligned the machine-readable quality rubric with the accepted clarity,
+  accuracy, insight-density, cross-referencing, and portfolio-relevance design
 - Updated repository, pipeline, public-process, and contributing links after consolidation
 
 ## [0.1.0] - 2026-02-17

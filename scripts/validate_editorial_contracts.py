@@ -143,6 +143,127 @@ ESSAY_CATEGORIES = {
     Path("templates/retrospective.md"): "retrospective",
 }
 PUBLICATION_TEMPLATES = set(ESSAY_CATEGORIES) | {Path("templates/log.md")}
+REQUIRED_PUBLICATION_BODY_MARKERS = {
+    Path("templates/case-study.md"): (
+        "# [Title]",
+        "## Overview",
+        "## Context and Motivation",
+        "## Architecture and Implementation",
+        "## Results and Metrics",
+        "## Lessons Learned",
+        "## Relationship to the Organ System",
+        "## References",
+    ),
+    Path("templates/guide.md"): (
+        "# [Title]",
+        "## Who This Is For",
+        "## The Core Idea",
+        "## Step-by-Step",
+        "## Worked Example",
+        "## Common Pitfalls",
+        "## Further Reading",
+        "## References",
+    ),
+    Path("templates/meta-system.md"): (
+        "# [Title]",
+        "## The Problem / Context",
+        "## How the System Handles It",
+        "## What This Reveals About the Meta-System",
+        "## What Doesn't Work Yet",
+        "## Implications",
+        "## References",
+    ),
+    Path("templates/methodology.md"): (
+        "# [Title]",
+        "## The Method in One Paragraph",
+        "## Theoretical Basis",
+        "## How It Works",
+        "## Application in the Organ System",
+        "## Limitations and Boundaries",
+        "## Comparison to Alternatives",
+        "## References",
+    ),
+    Path("templates/retrospective.md"): (
+        "# [Title]",
+        "## What Happened",
+        "## What Went Well",
+        "## What Went Wrong",
+        "## What We Learned",
+        "## What Changed as a Result",
+        "## References",
+    ),
+    Path("templates/log.md"): (
+        "## Précis",
+        "## Descriptive Summary",
+        "## Analytical Summary",
+        "## The Voices",
+        "## Workspace Activity",
+        "## Behind the Scenes",
+    ),
+}
+READER_RUBRIC_DIMENSIONS = (
+    "orientation",
+    "technical_depth",
+    "conceptual_depth",
+    "commercial_relevance",
+    "evidence",
+    "seo_surface",
+    "cross_linking",
+)
+READER_RUBRIC_ANCHORS = {0, 1, 2, 3, 4}
+QUALITY_RUBRIC_DIMENSIONS = (
+    "clarity",
+    "accuracy",
+    "insight_density",
+    "cross_referencing",
+    "portfolio_relevance",
+)
+QUALITY_RUBRIC_ANCHORS = {0, 5, 10, 15, 20}
+QUALITY_RUBRIC_THRESHOLDS = {
+    "publish": 60,
+    "flagship_candidate": 80,
+    "exemplar": 90,
+}
+QUALITY_RUBRIC_README_HEADINGS = (
+    "### Clarity (20 points)",
+    "### Accuracy (20 points)",
+    "### Insight Density (20 points)",
+    "### Cross-Referencing (20 points)",
+    "### Portfolio Relevance (20 points)",
+    "### Scoring Guidelines",
+)
+CATEGORY_README_HEADINGS = (
+    "### Meta-System Essay",
+    "### Case Study",
+    "### Retrospective",
+    "### Guide",
+    "### Methodology Essay",
+)
+REQUIRED_READER_MODE_DOC_MARKERS = (
+    "# Reader-mode repository documentation",
+    "## Decision",
+    "## Reader questions",
+    "## Repository classes",
+    "## Required root README sequence",
+    "## Canonical layout",
+    "## Canonical project record",
+    "## Audience edition contracts",
+    "### General",
+    "### Technical",
+    "### Humanities",
+    "### Business",
+    "### Evaluator",
+    "## Evidence rules",
+    "## Search-topic clusters",
+    "## Audit and conversion priority",
+    "## CI contract",
+    "## Migration protocol",
+)
+READER_RUBRIC_DOC_SENTENCE = (
+    "Score the current public documentation from 0–4 across orientation, "
+    "technical depth, conceptual depth, commercial relevance, evidence, SEO "
+    "surface, and cross-linking."
+)
 READER_MODE_TEMPLATES = {
     Path("templates/repository-readme-v2.md"),
     Path("templates/evidence.md"),
@@ -538,10 +659,29 @@ def _table_cells(line: str) -> list[str] | None:
     return [cell.strip() for cell in stripped[1:-1].split("|")]
 
 
+def _without_html_comments(path: Path, content: str, errors: list[str]) -> str:
+    """Remove rendered-invisible HTML comments, including multiline regions."""
+    visible: list[str] = []
+    cursor = 0
+    while True:
+        start = content.find("<!--", cursor)
+        if start < 0:
+            visible.append(content[cursor:])
+            break
+        visible.append(content[cursor:start])
+        end = content.find("-->", start + 4)
+        if end < 0:
+            errors.append(f"{path}: unclosed HTML comment")
+            break
+        cursor = end + 3
+    return "".join(visible)
+
+
 def _rendered_markdown_lines(
     path: Path, content: str, errors: list[str]
 ) -> list[str]:
-    """Remove fenced code so literals cannot satisfy rendered-page contracts."""
+    """Remove rendered-invisible comments and fences from Markdown contracts."""
+    content = _without_html_comments(path, content, errors)
     rendered: list[str] = []
     fence_character: str | None = None
     fence_length = 0
@@ -751,20 +891,73 @@ def _validate_reader_structure(
         _validate_required_reader_table(path, lines, header, errors)
 
 
+def _validate_publication_body(
+    path: Path, content: str, errors: list[str]
+) -> None:
+    parts = content.split("---", 2)
+    if not content.startswith("---") or len(parts) < 3:
+        return
+    body_lines = _rendered_markdown_lines(path, parts[2], errors)
+    _validate_reader_structure(
+        path,
+        body_lines,
+        REQUIRED_PUBLICATION_BODY_MARKERS.get(path, ()),
+        errors,
+    )
+
+
+def _validate_reader_mode_documentation(root: Path, errors: list[str]) -> None:
+    relative_path = Path("docs/reader-mode-documentation.md")
+    path = root / relative_path
+    if not path.is_file():
+        errors.append(f"{relative_path}: required reader-mode standard missing")
+        return
+    content = path.read_text(encoding="utf-8")
+    rendered_lines = _rendered_markdown_lines(relative_path, content, errors)
+    _validate_reader_structure(
+        relative_path,
+        rendered_lines,
+        REQUIRED_READER_MODE_DOC_MARKERS,
+        errors,
+    )
+    normalized = re.sub(r"\s+", " ", "\n".join(rendered_lines)).strip()
+    if READER_RUBRIC_DOC_SENTENCE not in normalized:
+        errors.append(
+            f"{relative_path}: reader rubric dimension sentence is missing or stale"
+        )
+    rubric_link = (
+        "[`schemas/reader-mode-rubric.yaml`](../schemas/reader-mode-rubric.yaml)"
+    )
+    if "\n".join(rendered_lines).count(rubric_link) != 1:
+        errors.append(
+            f"{relative_path}: canonical reader rubric link must appear exactly once"
+        )
+
+
 def _validate_readme(
     root: Path, required_map: dict[str, Any], errors: list[str]
 ) -> None:
     readme_path = root / "README.md"
-    readme = readme_path.read_text(encoding="utf-8")
+    raw_readme = readme_path.read_text(encoding="utf-8")
+    command_readme = _without_html_comments(Path("README.md"), raw_readme, errors)
+    rendered_readme = "\n".join(
+        _rendered_markdown_lines(Path("README.md"), raw_readme, errors)
+    )
     required_fields = set(required_map)
-    development_parts = readme.split("## Development", 1)
-    development_section = (
-        development_parts[1].split("\n## ", 1)[0]
-        if len(development_parts) == 2
+    command_development_parts = command_readme.split("## Development", 1)
+    command_development_section = (
+        command_development_parts[1].split("\n## ", 1)[0]
+        if len(command_development_parts) == 2
+        else ""
+    )
+    rendered_development_parts = rendered_readme.split("## Development", 1)
+    rendered_development_section = (
+        rendered_development_parts[1].split("\n## ", 1)[0]
+        if len(rendered_development_parts) == 2
         else ""
     )
     bash_blocks = re.findall(
-        r"```bash\s*\n(.*?)\n```", development_section, re.DOTALL
+        r"```bash\s*\n(.*?)\n```", command_development_section, re.DOTALL
     )
     executable_bash_lines = {
         line.strip()
@@ -773,7 +966,7 @@ def _validate_readme(
         if line.strip() and not line.lstrip().startswith("#")
     }
     for prerequisite in REQUIRED_LOCAL_CI_PREREQUISITES:
-        if prerequisite not in development_section:
+        if prerequisite not in rendered_development_section:
             errors.append(
                 "README.md: missing local CI reproduction prerequisite: "
                 f"{prerequisite}"
@@ -789,7 +982,7 @@ def _validate_readme(
         "The `organs_referenced` array",
     )
     for phrase in obsolete_field_guidance:
-        if phrase in readme:
+        if phrase in rendered_readme:
             errors.append(f"README.md: obsolete frontmatter guidance: {phrase}")
 
     expected_count_phrases = (
@@ -797,10 +990,34 @@ def _validate_readme(
         f"All {len(required_fields)} required fields",
     )
     for phrase in expected_count_phrases:
-        if phrase not in readme:
+        if phrase not in rendered_readme:
             errors.append(f"README.md: missing schema-derived field count: {phrase}")
 
-    section_parts = readme.split("## Frontmatter Schema", 1)
+    category_parts = rendered_readme.split("## Essay Categories", 1)
+    if len(category_parts) != 2:
+        errors.append("README.md: missing Essay Categories section")
+    else:
+        category_section = category_parts[1].split("\n## ", 1)[0]
+        _validate_reader_structure(
+            Path("README.md"),
+            category_section.splitlines(),
+            CATEGORY_README_HEADINGS,
+            errors,
+        )
+
+    quality_parts = rendered_readme.split("## Quality Rubric", 1)
+    if len(quality_parts) != 2:
+        errors.append("README.md: missing Quality Rubric section")
+    else:
+        quality_section = quality_parts[1].split("\n## ", 1)[0]
+        _validate_reader_structure(
+            Path("README.md"),
+            quality_section.splitlines(),
+            QUALITY_RUBRIC_README_HEADINGS,
+            errors,
+        )
+
+    section_parts = rendered_readme.split("## Frontmatter Schema", 1)
     if len(section_parts) != 2:
         errors.append("README.md: missing Frontmatter Schema section")
         return
@@ -939,6 +1156,12 @@ def _validate_schema_inventory(root: Path, errors: list[str]) -> None:
         schema = _load_yaml(root / relative_path, errors)
         if not isinstance(schema, dict):
             errors.append(f"{relative_path}: schema must be a YAML mapping")
+            continue
+        if schema.get("schema_version") != "1.0":
+            errors.append(f"{relative_path}: schema_version must be '1.0'")
+        description = schema.get("description")
+        if not isinstance(description, str) or not description.strip():
+            errors.append(f"{relative_path}: schema needs a nonempty description")
 
 
 def _validate_tag_governance(
@@ -999,6 +1222,233 @@ def _validate_tag_governance(
                 "schemas/tag-governance.yaml: preferred tag does not match "
                 f"the governed pattern: {tag!r}"
             )
+
+
+def _validate_category_taxonomy(
+    root: Path, frontmatter_category_rules: Any, errors: list[str]
+) -> None:
+    taxonomy_path = Path("schemas/category-taxonomy.yaml")
+    taxonomy = _load_yaml(root / taxonomy_path, errors)
+    if not isinstance(taxonomy, dict) or not isinstance(
+        frontmatter_category_rules, dict
+    ):
+        errors.append(
+            "category taxonomy/frontmatter mismatch: both contracts must be mappings"
+        )
+        return
+    categories = taxonomy.get("categories")
+    enum = frontmatter_category_rules.get("enum")
+    if not isinstance(categories, dict) or not isinstance(enum, list) or not all(
+        isinstance(category, str) for category in enum
+    ):
+        errors.append(
+            "category taxonomy/frontmatter mismatch: categories and enum must be "
+            "structured collections"
+        )
+        return
+
+    taxonomy_categories = set(categories)
+    frontmatter_categories = set(enum)
+    template_categories = set(ESSAY_CATEGORIES.values())
+    if (
+        len(enum) != len(frontmatter_categories)
+        or taxonomy_categories != frontmatter_categories
+        or template_categories != frontmatter_categories
+    ):
+        errors.append(
+            "category taxonomy/frontmatter/template mismatch: "
+            f"taxonomy={sorted(taxonomy_categories)}, "
+            f"frontmatter={sorted(frontmatter_categories)}, "
+            f"templates={sorted(template_categories)}"
+        )
+
+    for category, details in categories.items():
+        if not isinstance(details, dict):
+            errors.append(
+                f"schemas/category-taxonomy.yaml: category {category!r} "
+                "must be a mapping"
+            )
+            continue
+        description = details.get("description")
+        examples = details.get("examples")
+        typical_count = details.get("typical_count")
+        if not isinstance(description, str) or not description.strip():
+            errors.append(
+                f"schemas/category-taxonomy.yaml: category {category!r} "
+                "needs a description"
+            )
+        if not isinstance(examples, list) or not examples or not all(
+            isinstance(example, str) and example.strip() for example in examples
+        ):
+            errors.append(
+                f"schemas/category-taxonomy.yaml: category {category!r} "
+                "needs nonempty examples"
+            )
+        if (
+            not isinstance(typical_count, int)
+            or isinstance(typical_count, bool)
+            or typical_count < 0
+        ):
+            errors.append(
+                f"schemas/category-taxonomy.yaml: category {category!r} "
+                "needs a nonnegative integer typical_count"
+            )
+
+    deprecated = taxonomy.get("deprecated_categories")
+    if not isinstance(deprecated, dict) or any(
+        not isinstance(source, str)
+        or not isinstance(target, str)
+        or source in frontmatter_categories
+        or target not in frontmatter_categories
+        for source, target in (deprecated.items() if isinstance(deprecated, dict) else ())
+    ):
+        errors.append(
+            "schemas/category-taxonomy.yaml: deprecated categories must map "
+            "noncanonical names to canonical categories"
+        )
+
+
+def _validate_reader_rubric(root: Path, errors: list[str]) -> None:
+    rubric_path = Path("schemas/reader-mode-rubric.yaml")
+    rubric = _load_yaml(root / rubric_path, errors)
+    if not isinstance(rubric, dict):
+        errors.append(f"{rubric_path}: rubric must be a YAML mapping")
+        return
+
+    scale = rubric.get("scale")
+    expected_scale = {"minimum": 0, "maximum": 4}
+    if scale != expected_scale:
+        errors.append(
+            f"{rubric_path}: expected scoring scale {expected_scale}, found {scale!r}"
+        )
+
+    dimensions = rubric.get("dimensions")
+    if not isinstance(dimensions, dict):
+        errors.append(f"{rubric_path}: dimensions must be a YAML mapping")
+        return
+    actual_dimensions = set(dimensions)
+    expected_dimensions = set(READER_RUBRIC_DIMENSIONS)
+    if actual_dimensions != expected_dimensions:
+        errors.append(
+            f"{rubric_path}: dimension set mismatch: "
+            f"expected={list(READER_RUBRIC_DIMENSIONS)}, "
+            f"actual={sorted(actual_dimensions)}"
+        )
+
+    for dimension in sorted(expected_dimensions & actual_dimensions):
+        details = dimensions[dimension]
+        if not isinstance(details, dict):
+            errors.append(f"{rubric_path}: dimension {dimension!r} must be a mapping")
+            continue
+        question = details.get("question")
+        if not isinstance(question, str) or not question.strip():
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} needs a question"
+            )
+        anchors = details.get("anchors")
+        if not isinstance(anchors, dict):
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} anchors must be a mapping"
+            )
+            continue
+        if set(anchors) != READER_RUBRIC_ANCHORS:
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} anchor set mismatch: "
+                f"expected={sorted(READER_RUBRIC_ANCHORS)}, "
+                f"actual={sorted(anchors, key=str)}"
+            )
+        empty_anchors = [
+            anchor
+            for anchor, description in anchors.items()
+            if not isinstance(description, str) or not description.strip()
+        ]
+        if empty_anchors:
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} has empty anchors: "
+                f"{sorted(empty_anchors, key=str)}"
+            )
+
+    scoring_rules = rubric.get("scoring_rules")
+    if not isinstance(scoring_rules, list) or not scoring_rules or not all(
+        isinstance(rule, str) and rule.strip() for rule in scoring_rules
+    ):
+        errors.append(f"{rubric_path}: scoring_rules must be nonempty strings")
+
+
+def _validate_quality_rubric(root: Path, errors: list[str]) -> None:
+    rubric_path = Path("schemas/quality-rubric.yaml")
+    rubric = _load_yaml(root / rubric_path, errors)
+    if not isinstance(rubric, dict):
+        errors.append(f"{rubric_path}: rubric must be a YAML mapping")
+        return
+    if rubric.get("total_points") != 100:
+        errors.append(f"{rubric_path}: total_points must be 100")
+
+    dimensions = rubric.get("dimensions")
+    if not isinstance(dimensions, dict):
+        errors.append(f"{rubric_path}: dimensions must be a YAML mapping")
+        return
+    actual_dimensions = set(dimensions)
+    expected_dimensions = set(QUALITY_RUBRIC_DIMENSIONS)
+    if actual_dimensions != expected_dimensions:
+        errors.append(
+            f"{rubric_path}: dimension set mismatch: "
+            f"expected={list(QUALITY_RUBRIC_DIMENSIONS)}, "
+            f"actual={sorted(actual_dimensions)}"
+        )
+
+    total_dimension_points = 0
+    for dimension in sorted(expected_dimensions & actual_dimensions):
+        details = dimensions[dimension]
+        if not isinstance(details, dict):
+            errors.append(f"{rubric_path}: dimension {dimension!r} must be a mapping")
+            continue
+        max_points = details.get("max_points")
+        if max_points != 20:
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} max_points must be 20"
+            )
+        else:
+            total_dimension_points += max_points
+        description = details.get("description")
+        if not isinstance(description, str) or not description.strip():
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} needs a description"
+            )
+        scoring = details.get("scoring")
+        if not isinstance(scoring, dict):
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} scoring must be a mapping"
+            )
+            continue
+        if set(scoring) != QUALITY_RUBRIC_ANCHORS:
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} scoring anchors mismatch: "
+                f"expected={sorted(QUALITY_RUBRIC_ANCHORS)}, "
+                f"actual={sorted(scoring, key=str)}"
+            )
+        empty_anchors = [
+            anchor
+            for anchor, description in scoring.items()
+            if not isinstance(description, str) or not description.strip()
+        ]
+        if empty_anchors:
+            errors.append(
+                f"{rubric_path}: dimension {dimension!r} has empty scoring "
+                f"anchors: {sorted(empty_anchors, key=str)}"
+            )
+    if total_dimension_points != 100:
+        errors.append(
+            f"{rubric_path}: dimension points must sum to 100, "
+            f"found {total_dimension_points}"
+        )
+
+    if rubric.get("thresholds") != QUALITY_RUBRIC_THRESHOLDS:
+        errors.append(
+            f"{rubric_path}: thresholds mismatch: "
+            f"expected={QUALITY_RUBRIC_THRESHOLDS}, "
+            f"actual={rubric.get('thresholds')!r}"
+        )
 
 
 def _validate_repository_identity(root: Path, errors: list[str]) -> None:
@@ -1081,6 +1531,7 @@ def validate(root: Path) -> list[str]:
     errors: list[str] = []
 
     _validate_schema_inventory(root, errors)
+    _validate_reader_mode_documentation(root, errors)
 
     overlap = PUBLICATION_TEMPLATES & READER_MODE_TEMPLATES
     if overlap:
@@ -1092,6 +1543,14 @@ def validate(root: Path) -> list[str]:
     unclassified = sorted(discovered - declared)
     if unclassified:
         errors.append(f"unclassified template files: {list(map(str, unclassified))}")
+    publication_marker_contract_gap = sorted(
+        PUBLICATION_TEMPLATES ^ set(REQUIRED_PUBLICATION_BODY_MARKERS)
+    )
+    if publication_marker_contract_gap:
+        errors.append(
+            "publication body contracts do not match declared templates: "
+            f"{list(map(str, publication_marker_contract_gap))}"
+        )
     marker_contract_gap = sorted(
         READER_MODE_TEMPLATES ^ set(REQUIRED_READER_MARKERS)
     )
@@ -1116,6 +1575,11 @@ def validate(root: Path) -> list[str]:
         data = _frontmatter(path, errors)
         if data is not None:
             frontmatters[relative_path] = data
+        _validate_publication_body(
+            relative_path,
+            path.read_text(encoding="utf-8"),
+            errors,
+        )
 
     frontmatter_schema = _load_yaml(root / "schemas/frontmatter-schema.yaml", errors)
     if not isinstance(frontmatter_schema, dict):
@@ -1128,6 +1592,9 @@ def validate(root: Path) -> list[str]:
     required_fields = set(required_map)
     allowed_fields = required_fields | set(optional_map)
     _validate_tag_governance(root, required_map.get("tags"), errors)
+    _validate_category_taxonomy(root, required_map.get("category"), errors)
+    _validate_reader_rubric(root, errors)
+    _validate_quality_rubric(root, errors)
 
     for path, expected_category in sorted(ESSAY_CATEGORIES.items()):
         frontmatter = frontmatters.get(path)
