@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0",
+  "recorded_at": "2026-09-09",
+  "repository": "organvm/editorial-standards",
+  "pull_request": 12,
+  "parent_head": "56f9a2d04eb779b78383acb710dce38a253b6236",
+  "base_sha": "d0488a7208d976daa32486e223b6656105a321cd",
+  "source_sha256": {
+    "scripts/validate_editorial_contracts.py": "9467e438ea5ac1d65e742ca065d7ccc9f918c8dd9dc199258fae82c650423087",
+    "tests/test_reader_acceptance_contracts.py": "9f8fe8a5a2ab972fcbafb8781218bf2cbbbe7359546943f5bf645352b851a57d",
+    "tests/test_editorial_contracts.py": "8701f2c79e96f71f12cfcd09c931a0be261ab9f5d0fab9b34f37e26dfc4d8e10",
+    "tests/test_reader_mode_final_boundaries.py": "72c2e60cc480fca685eff9ab60bf7294a6f3d0d2e6eec83cb6f1e68c93151951",
+    "docs/adr/001-initial-architecture.md": "2f3c0b23b66664c744bf95d5bc38e02e29449f47b34434feba9653f9aa10920a"
+  },
+  "repairs": [
+    "Preserve retained Markdown block boundaries during inline link counting.",
+    "Apply nested link precedence without hiding valid inner canonical links.",
+    "Pin reader rubric dimension order.",
+    "Pin seed schema_version to string 1.0.",
+    "Pin canonical category descriptions.",
+    "Update ADR001 to distinguish repository contract validation from downstream essay validation."
+  ],
+  "validation": {
+    "baseline_counterexamples": {
+      "parent_head": "56f9a2d04eb779b78383acb710dce38a253b6236",
+      "test_methods": 7,
+      "failing_subcases": 20
+    },
+    "final_contract_suite": {
+      "command": "python -m unittest discover -s tests -v",
+      "passed": 133,
+      "failed": 0,
+      "duration_seconds": 81.328,
+      "admission": "Actual parent process held worktree_scope(root).lease_kind and heavy leases via limen.host_admission.hold_lease, owner activation-editorial-acceptance, surface codex_work_mode."
+    },
+    "repository_validator": {
+      "publication_templates": 6,
+      "reader_mode_templates": 7
+    },
+    "independent_source_review": {
+      "reviewer": "reader_acceptance",
+      "disposition": "pass",
+      "additional_inline_probes": 8
+    },
+    "diff_hygiene": "pass"
+  },
+  "review_threads": {
+    "addressed": [
+      "PRRT_kwDORSnA-c6eDdRV",
+      "PRRT_kwDORSnA-c6eEwbf",
+      "PRRT_kwDORSnA-c6eEwbw",
+      "PRRT_kwDORSnA-c6eFJN9",
+      "PRRT_kwDORSnA-c6eFlTQ",
+      "PRRT_kwDORSnA-c6eFlTY",
+      "PRRT_kwDORSnA-c6eFlTg",
+      "PRRT_kwDORSnA-c6eFlTj",
+      "PRRT_kwDORSnA-c6eFlTp",
+      "PRRT_kwDORSnA-c6eFlTw",
+      "PRRT_kwDORSnA-c6eGwjl",
+      "PRRT_kwDORSnA-c6eGwjq",
+      "PRRT_kwDORSnA-c6eGwjv",
+      "PRRT_kwDORSnA-c6gTF2u",
+      "PRRT_kwDORSnA-c6gTF22",
+      "PRRT_kwDORSnA-c6gTF2-",
+      "PRRT_kwDORSnA-c6gTF3I",
+      "PRRT_kwDORSnA-c6gTF3S",
+      "PRRT_kwDORSnA-c6gT0Dj",
+      "PRRT_kwDORSnA-c6gT0Dq",
+      "PRRT_kwDORSnA-c6gT0D1",
+      "PRRT_kwDORSnA-c6gT0D-",
+      "PRRT_kwDORSnA-c6gT0EE"
+    ],
+    "held": [
+      {
+        "id": "PRRT_kwDORSnA-c6gT0D4",
+        "reason": "Generated AGENTS.md, CLAUDE.md and GEMINI.md must be regenerated through the actually merged Engine broker and carry its immutable input/output receipt; no generated file is hand-edited in this repair."
+      }
+    ]
+  },
+  "limits": [
+    "Source acceptance does not claim hosted CI execution or deployed services.",
+    "PR remains draft pending the actual Engine merge, broker-driven context regeneration, descendant validation and final exact-head acceptance."
+  ]
+}

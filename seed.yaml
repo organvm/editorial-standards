@@ -1,4 +1,4 @@
-# seed.yaml — Automation Contract for organvm-v-logos/editorial-standards
+# seed.yaml — Automation Contract for organvm/editorial-standards
 # Schema: seed/v1.0
 # Generated: 2026-02-17 (LOGOS Sprint)
 
@@ -6,7 +6,7 @@ schema_version: "1.0"
 organ: V
 organ_name: Public Process
 repo: editorial-standards
-org: organvm-v-logos
+org: organvm
 
 metadata:
   implementation_status: PRODUCTION
@@ -42,7 +42,10 @@ produces:
         repos: ["public-process"]
         relationship: "provides-templates-for"
 
-consumes: []
+consumes:
+  - type: schema
+    source: organvm-iv-taxis/schema-definitions
+    description: "Consumes the canonical project-record and assertion-evidence schemas"
 
 subscriptions:
   - event: essay.published

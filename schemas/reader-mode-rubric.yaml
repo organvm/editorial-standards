@@ -1,0 +1,70 @@
+schema_version: "1.0"
+description: >-
+  Evidence-oriented scoring rubric for repository documentation. Scores measure
+  the current public interface, not the intrinsic quality or complexity of the work.
+scale:
+  minimum: 0
+  maximum: 4
+dimensions:
+  orientation:
+    question: "Can a first-time reader identify the project, its purpose, status, and next path?"
+    anchors:
+      0: "No usable root README."
+      1: "A title or fragment exists, but purpose and status remain unclear."
+      2: "Purpose is identifiable; status or navigation is missing."
+      3: "Purpose, status, and next actions are clear."
+      4: "The first screen also routes distinct audiences without blocking the canonical depth."
+  technical_depth:
+    question: "Can a technical reader inspect, run, test, and reason about failure boundaries?"
+    anchors:
+      0: "No technical inspection path."
+      1: "Stack or implementation is named without executable guidance."
+      2: "Setup or architecture exists, but important interfaces or tests are absent."
+      3: "Architecture, execution, interfaces, and verification are substantially documented."
+      4: "Operations, failure modes, security, observability, and debt boundaries are also explicit."
+  conceptual_depth:
+    question: "Does the documentation explain the ideas, formal choices, genealogy, or disciplinary stakes?"
+    anchors:
+      0: "No conceptual framing."
+      1: "A theme is named but not developed."
+      2: "Concepts or theory are explained in relation to the project."
+      3: "Formal/technical choices are connected to intellectual or cultural consequences."
+      4: "A rigorous, source-aware humanities or research edition supports sustained interpretation."
+  commercial_relevance:
+    question: "Can an operational reader map the project to a real workflow without unsupported claims?"
+    anchors:
+      0: "No user or operational problem is identified."
+      1: "Value language appears without a workflow."
+      2: "Users, problem, inputs, and outputs are identifiable."
+      3: "Integration, constraints, and current workaround are mapped."
+      4: "Deployment evidence and projected value are explicitly separated for each domain."
+  evidence:
+    question: "Are claims, status, authorship, limitations, and inspection paths auditable?"
+    anchors:
+      0: "Claims have no inspection path."
+      1: "Source exists, but status/authorship/limitations are unclear."
+      2: "Tests, demo, or history support some claims."
+      3: "Contribution, status, evidence, and limitations are explicit."
+      4: "Claim references expose schema-valid postures, assertion records expose schema-valid verification states, and project limitations clearly bound scope."
+  seo_surface:
+    question: "Does each legitimate search intent have a useful, non-duplicative landing path?"
+    anchors:
+      0: "The project is effectively undiscoverable from its documentation."
+      1: "Only the repository name or generic terms describe it."
+      2: "The README uses concrete problem/domain language."
+      3: "Distinct audience, concept, or industry pages match real search intents."
+      4: "A coherent topic cluster links every landing page back to canonical facts and evidence."
+  cross_linking:
+    question: "Can a reader move vertically within the project and laterally through related systems?"
+    anchors:
+      0: "No meaningful internal or ecosystem links."
+      1: "A few unstructured links exist."
+      2: "README links to relevant local docs or parent project."
+      3: "Audience pages, evidence, architecture, and related systems are deliberately connected."
+      4: "Typed, reciprocal links form a maintained cross-repository knowledge graph."
+scoring_rules:
+  - "Score only observable public documentation."
+  - "Do not convert word count, badges, or keyword density directly into quality."
+  - "A proposed application cannot satisfy deployment or outcome evidence."
+  - "Record unknowns; do not infer authorship, adoption, or business results."
+  - "Use the same rubric across classes, but rank conversion priority within class."

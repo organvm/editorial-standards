@@ -12,7 +12,7 @@ This repo participates in the **ORGAN-V (Public Process)** swarm.
 - **Produce** `essay-templates` for ORGAN-V
 
 ### External Dependencies
-- *No external dependencies*
+- **Consume** `schema` from [`organvm-iv-taxis/schema-definitions`](../../organvm-iv-taxis/schema-definitions/CLAUDE.md)
 
 ### Governance Constraints
 - Adhere to unidirectional flow: I→II→III

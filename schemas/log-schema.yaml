@@ -1,6 +1,6 @@
 # log-schema.yaml — ORGAN-V Captain's Log Frontmatter Specification
 # Version: 1.0
-# Governs: All logs in organvm-v-logos/public-process/_logs/
+# Governs: All logs in organvm/public-process/_logs/
 
 schema_version: "1.0"
 description: >

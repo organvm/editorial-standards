@@ -1,0 +1,27 @@
+{
+  "observed_at": "2026-09-16T06:01:26.818356+00:00",
+  "repository": "organvm/editorial-standards",
+  "pull_request": 12,
+  "tested_head": "7702babd4145729b227e4b0c3895547be2f2ba64",
+  "source_sha256": {
+    "README.md": "2204a446240b849fa4bf4346c2bb86772397952affaed130e66274192f8584b9",
+    "docs/reader-mode-regeneration.md": "b3137d7a2fb6efa6e31a95b8b29241ad9c11d19d4536e40879b6b1e40217ee7b",
+    "scripts/check_reader_upstreams.py": "7d69fb83fc5e284f08c96c5acae5676e064c16fd1023fed5a4523920088a15fc",
+    "tests/test_reader_upstreams.py": "656c126906ed21b520ba153acb45f1f7f9f1eced092f3b9dfd0e967e58475903",
+    "scripts/validate_editorial_contracts.py": "9467e438ea5ac1d65e742ca065d7ccc9f918c8dd9dc199258fae82c650423087"
+  },
+  "validation": {
+    "command": "python3 -m unittest discover -s tests -q",
+    "passed": 141,
+    "failed": 0,
+    "duration_seconds": 32.874,
+    "deadline_seconds": 180,
+    "host_admission": "Actual parent held worktree_scope lease and heavy lease; owner editorial-reader-acceptance-20260916, surface codex_work_mode",
+    "repository_validator": {
+      "publication_templates": 6,
+      "reader_mode_templates": 7,
+      "exit_code": 0
+    }
+  },
+  "scope": "Source acceptance only; generated contexts unchanged and upstream acceptance remains required."
+}

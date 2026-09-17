@@ -4,6 +4,8 @@
 **Date:** 2026-02-17
 **Context:** LOGOS Sprint — establishing editorial-standards as the governance layer for ORGAN-V writing
 
+**Implementation update (2026-09-09):** The format and repository decisions below remain in effect. The original schema had 11 required fields; the current frontmatter contract has 12 required fields and 2 optional fields. Repository-local validation now runs `python3 scripts/validate_editorial_contracts.py` and the adversarial contract regressions in CI. It checks schema and template consistency, canonical policy and repository identity, reader structure, and navigation. Validation of individual published essays remains a downstream responsibility of essay-pipeline.
+
 ## Decision Drivers
 
 ORGAN-V (Logos / Public Process) needs a codified set of editorial rules — voice, structure, quality, metadata — that governs all published essays. The question is not whether these rules should exist (they must) but how they should be represented and where they should live.
@@ -49,7 +51,7 @@ A structured database provides strong typing but sacrifices readability and acce
 
 ### Context
 
-The frontmatter schema defines the 11 required metadata fields for every essay. This schema needs to be both human-readable (authors reference it when writing frontmatter) and machine-consumable (the essay-pipeline validates against it).
+At the initial decision, the frontmatter schema defined 11 required metadata fields for every essay. This schema needs to be both human-readable (authors reference it when writing frontmatter) and machine-consumable (the essay-pipeline validates against it).
 
 ### Considered Options
 
@@ -67,7 +69,7 @@ The frontmatter schema defines the 11 required metadata fields for every essay. 
 
 - **Format alignment.** Essay frontmatter is written in YAML. Defining the schema in the same format means authors see the exact syntax they need to produce. There is no translation step between "what the schema says" and "what I type."
 - **Dual readability.** YAML is readable by both humans and machines. Authors can scan the schema and understand it immediately. The essay-pipeline can parse it programmatically for validation.
-- **Simplicity.** JSON Schema is powerful but verbose. For 11 fields with straightforward constraints, the expressiveness of JSON Schema is unnecessary overhead. The constraints (character limits, enum values, conditional requirements) are easily expressed in YAML with prose annotations.
+- **Simplicity.** JSON Schema is powerful but verbose. For the initial 11 fields with straightforward constraints, the expressiveness of JSON Schema was unnecessary overhead. The constraints (character limits, enum values, conditional requirements) are easily expressed in YAML with prose annotations.
 - **Ecosystem fit.** The broader organvm system uses YAML extensively (seed.yaml, GitHub Actions workflows, configuration files). YAML is the lingua franca of the system's declarative layer.
 
 ### Rejected Alternatives
@@ -115,7 +117,7 @@ Colocating governance with content is simpler initially but creates problems at 
 ### Negative
 
 - Cross-repository coordination is required when schema changes need corresponding pipeline updates.
-- No formal schema validation at the editorial-standards level (validation happens downstream in essay-pipeline).
+- Repository-local contract validation and downstream essay validation must evolve together when editorial policy changes.
 - Contributors must know to look in a separate repository for the rules, rather than finding them alongside the content.
 
 ### Mitigations

@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "date": "2026-09-17",
+  "repository_id": 1160364281,
+  "pull_request": 12,
+  "source_parent": "b08f55d687e02e503c81406c03500dffa0999b89",
+  "scope": "Focused upstream-resolver unit execution in the Chat container; not full repository, admitted-host, hosted CI, broker-generation, integration, or runtime acceptance.",
+  "runtime": "CPython 3.13.5",
+  "source_custody": "The three edited files were reconstructed from exact-parent GitHub connector reads and matched their original Git blob hashes before modification.",
+  "command": "python3 -m unittest discover -s tests -p 'test_reader_upstreams.py' -v",
+  "results": {
+    "original_suite_tests": 8,
+    "original_suite_failures": 0,
+    "new_regression_against_original_source": "failed as expected: missing explicit github.com hostname",
+    "patched_suite_tests": 9,
+    "patched_suite_failures": 0,
+    "cli_calls_are_mocked": true,
+    "host_selection_requests_checked": 18,
+    "environment_override": "GH_HOST=github.enterprise.invalid"
+  },
+  "sha256": {
+    "scripts/check_reader_upstreams.py": "1f1608a7d83eea8fcfc1bd405a97dd883c880ff62fb0e017f818adee92917cde",
+    "tests/test_reader_upstreams.py": "8968024286f4bf33e2f68d1d46bb3b3384de4ced0d7142a10d70977c979b77d4",
+    ".codex/plans/2026-09-16-reader-upstream-acceptance.md": "172b0fdfb6b89096e8ef1eca32dcabc61d608e0d99ebb2a9d6ec94997cd4dced"
+  },
+  "findings": [4031408878, 4031408869],
+  "generated_instruction_files_changed": false,
+  "full_contract_suite": "not run in this receipt",
+  "broker_regeneration": "not run in this receipt"
+}
